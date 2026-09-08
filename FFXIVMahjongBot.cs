@@ -75,6 +75,18 @@ public sealed class FFXIVMahjongBot : BotBase
     /// </summary>
     private static readonly bool AutoPassCallPrompts = false;
 
+    /// <summary>
+    /// Disabled 2026-09-08 after observing state 32 ("stuck, no inputs accepted") live during
+    /// real play, right after our own opcode-14 `SendAction` dispatch. The reference project
+    /// documented the identical failure signature from the identical mechanism — their fix was
+    /// routing through a native `ReceiveEvent(ButtonClick)` call on the button node instead of
+    /// `FireCallback`, which our confirmed-live 2026-09-07 test apparently didn't rule out (it
+    /// likely just got lucky on timing). Leave the "Next" screen for manual clicks until we
+    /// replicate their safer dispatch mechanism (needs checking whether RB's AtkAddonControl
+    /// exposes the native struct access that requires) and confirm it doesn't reproduce this.
+    /// </summary>
+    private static readonly bool AutoClickNext = false;
+
     public override string Name => "FFXIV Mahjong";
     public override PulseFlags PulseFlags => PulseFlags.All;
     public override bool IsAutonomous => true;
@@ -139,7 +151,8 @@ public sealed class FFXIVMahjongBot : BotBase
             if (DateTime.UtcNow - resultFirstSeen < HandResultStabilityWindow)
                 return; // still settling — let the result-modal animation finish before clicking
 
-            if (DateTime.UtcNow - _lastNextClickAttempt >= NextClickRetryInterval
+            if (AutoClickNext
+                && DateTime.UtcNow - _lastNextClickAttempt >= NextClickRetryInterval
                 && DateTime.UtcNow - _lastDispatchAt >= MinInterActionGap)
             {
                 _dispatcher.ClickNext(window);
