@@ -65,6 +65,15 @@ public sealed class FFXIVMahjongBot : BotBase
     private static readonly TimeSpan CallPromptBlockTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan PassRetryInterval = TimeSpan.FromSeconds(1);
 
+    /// <summary>
+    /// Temporarily disabled (2026-09-08) for a live RE session on Chi/Pon/Kan/Riichi/Tsumo/Ron
+    /// acceptance: leave call prompts untouched instead of auto-passing them, so the user can
+    /// manually trigger and observe each one (which tile is offered, what dispatch it takes)
+    /// instead of the bot clicking Pass before they get the chance. Re-enable once accept
+    /// dispatch for those actions is implemented and confirmed live.
+    /// </summary>
+    private static readonly bool AutoPassCallPrompts = false;
+
     public override string Name => "FFXIV Mahjong";
     public override PulseFlags PulseFlags => PulseFlags.All;
     public override bool IsAutonomous => true;
@@ -98,6 +107,9 @@ public sealed class FFXIVMahjongBot : BotBase
         {
             DateTime firstSeen = _callPromptFirstSeenAt ?? DateTime.UtcNow;
             _callPromptFirstSeenAt = firstSeen;
+
+            if (!AutoPassCallPrompts)
+                return; // left for manual interaction — see AutoPassCallPrompts
 
             if (DateTime.UtcNow - firstSeen < CallPromptBlockTimeout)
             {
