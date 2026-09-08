@@ -71,16 +71,20 @@ public sealed class EmjAddonReader
         DecodeTile(RBCore.Memory.Read<int>(window.Pointer + EmjOffsets.DoraIndicator));
 
     /// <summary>
-    /// Aka-dora (red five) offset, confirmed live 2026-09-07: a red 5m read as raw value
-    /// (normal 5m's raw) + 30 — i.e. relative id 34 instead of 4. Only 34 (red 5m) is
-    /// independently confirmed; 43 (red 5p) and 52 (red 5s) are inferred from the same
-    /// per-suit +9 spacing the normal tile ids already use, not yet confirmed live.
+    /// Aka-dora (red five) ids extend sequentially right after the normal 0-33 range: 34 = red
+    /// 5m, 35 = red 5p, 36 = red 5s. Corrected 2026-09-07 from an earlier "+30 from the normal
+    /// tile's raw value" guess that only fit red 5m by coincidence (4+30 happens to equal 34);
+    /// a second live capture of a drawn red 5s (raw = textureBase+36, alongside an already-held
+    /// normal 5s) broke that formula (22+30=52, not 36) and fits this simpler one instead. Red
+    /// 5m (34) and red 5s (36) are both confirmed live; red 5p (35) is inferred from the pattern,
+    /// not yet independently confirmed.
     /// </summary>
-    private const int AkaDoraRelativeIdOffset = 30;
+    private static readonly Dictionary<int, int> AkaDoraIdToBaseId = new() { [34] = 4, [35] = 13, [36] = 22 };
+    private static readonly Dictionary<int, int> BaseIdToAkaDoraId = new() { [4] = 34, [13] = 35, [22] = 36 };
 
     /// <summary>Inverse of <see cref="DecodeTile"/> — the raw hand-array value this tile would appear as.</summary>
     public static int EncodeTileRaw(Tile tile) =>
-        EmjOffsets.TileTextureBase + tile.Id + (tile.IsRedFive ? AkaDoraRelativeIdOffset : 0);
+        EmjOffsets.TileTextureBase + (tile.IsRedFive ? BaseIdToAkaDoraId[tile.Id] : tile.Id);
 
     private static Tile? DecodeTile(int raw)
     {
@@ -89,10 +93,9 @@ public sealed class EmjAddonReader
         int id = raw - EmjOffsets.TileTextureBase;
         if (id is >= 0 and < Tile.KindCount)
             return new Tile(id);
-        int akaBaseId = id - AkaDoraRelativeIdOffset;
-        if (akaBaseId is 4 or 13 or 22) // 5m, 5p, 5s
-            return new Tile(akaBaseId, isRedFive: true);
-        return null; // out-of-range: don't feed garbage into the engine
+        return AkaDoraIdToBaseId.TryGetValue(id, out int baseId)
+            ? new Tile(baseId, isRedFive: true)
+            : null; // out-of-range: don't feed garbage into the engine
     }
 
     private static TwoInt[] ReadAtkValues(AtkAddonControl window)

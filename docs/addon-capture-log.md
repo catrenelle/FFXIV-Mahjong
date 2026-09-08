@@ -100,11 +100,17 @@ Before/after around clicking the "Next" button on the hand-result screen:
 User reported the bot sometimes sits on a genuine discard turn without discarding, requiring
 a manual click. Root-caused via a live dump taken right after: the hand held both a normal 5m
 (raw 76045, decodes to id 4) and a red 5m (raw 76075) — 76075 didn't fit the normal 0-33 id
-range, so `DecodeTile` silently dropped it, undercounting the hand by one tile. The relationship
-is clean: **76075 = 76045 + 30**, i.e. a red five's raw value is the normal tile's raw value
-plus 30. Only red 5m (relative id 34) is confirmed live; red 5p (43) and red 5s (52) are
-inferred from the same +9-per-suit spacing normal ids already use, not yet independently
-confirmed. Fixed in `EmjAddonReader.DecodeTile`/`EncodeTileRaw`.
+range, so `DecodeTile` silently dropped it, undercounting the hand by one tile. Fixed in
+`EmjAddonReader.DecodeTile`/`EncodeTileRaw`.
+
+**Correction (later same day):** the first fix assumed aka-dora raw = normal tile's raw + 30
+(fit the one red-5m data point: 4+30=34). A second capture caught a drawn red 5s (raw 76077,
+alongside an already-held normal 5s) that broke this formula — 22+30=52, not 36. The actual
+pattern is simpler: aka-dora ids extend **sequentially right after the normal 0-33 range** —
+34/35/36 = red 5m/5p/5s. Red 5m (34) and red 5s (36) are confirmed live; red 5p (35) is
+inferred from the pattern, not yet independently confirmed. This second bug had the identical
+symptom (hand undercounted by one, discard silently skipped) since the first fix only covered
+the tile ids the +30 formula happened to produce.
 
 This alone wouldn't fully explain a *total* freeze (the policy would still discard some other
 tracked tile most of the time), so as a second, independent safety net: `FFXIVMahjongBot.Pulse()`
