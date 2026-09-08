@@ -68,4 +68,12 @@ internal static class EmjOffsets
     /// melds aren't tracked).
     /// </summary>
     public const int StatePostDrawOrCallDiscard = 6;
+
+    /// <summary>
+    /// Confirmed live 2026-09-08: observed with a full 11-tile concealed hand right after
+    /// manually accepting a Chi (13 - 2 tiles consumed into the meld = 11) — a genuine
+    /// "discard now" turn following a call, distinct from both <see cref="StateOurTurnDiscard"/>
+    /// and <see cref="StatePostDrawOrCallDiscard"/>.
+    /// </summary>
+    public const int StatePostCallDiscard = 3;
 }

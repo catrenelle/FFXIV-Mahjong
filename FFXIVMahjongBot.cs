@@ -13,12 +13,13 @@ namespace FFXIVMahjong;
 
 /// <summary>
 /// RebornBuddy botbase for Doman Mahjong. Current scope (see docs/addon-capture-log.md for
-/// what's confirmed vs. still unmapped): reads our own hand, discards efficiently every turn,
-/// passes on any call prompt (Chi/Pon/etc.) rather than accepting one, and dismisses the
-/// hand-result "Next" screen. It doesn't yet accept calls, declare riichi, or claim
-/// tsumo/ron — accepting a call needs two things we don't have yet: knowing which tile is
-/// being offered, and meld tracking (so our internal hand model doesn't desync once a meld
-/// exists).
+/// what's confirmed vs. still unmapped): reads our own hand, discards efficiently every turn
+/// (including after a manually-accepted call — see the meld-count inference in
+/// <see cref="Pulse"/>), passes on any call prompt (Chi/Pon/etc.) rather than accepting one,
+/// and dismisses the hand-result "Next" screen. It doesn't yet accept calls, declare riichi,
+/// or claim tsumo/ron itself — accepting a call needs knowing which tile is being offered,
+/// which isn't mapped yet (only the discard-side meld *count* is inferred, not what the
+/// called tiles actually are).
 /// </summary>
 public sealed class FFXIVMahjongBot : BotBase
 {
@@ -149,17 +150,27 @@ public sealed class FFXIVMahjongBot : BotBase
         }
         _handResultFirstSeenAt = null;
 
-        if (stateCode != EmjOffsets.StateOurTurnDiscard && stateCode != EmjOffsets.StatePostDrawOrCallDiscard)
+        if (stateCode != EmjOffsets.StateOurTurnDiscard
+            && stateCode != EmjOffsets.StatePostDrawOrCallDiscard
+            && stateCode != EmjOffsets.StatePostCallDiscard)
             return;
 
         var hand = _reader.ReadSelfHand(window);
 
-        // State 6 also covers the genuine post-call reduced-hand case, which we can't
-        // correctly evaluate yet (melds aren't tracked, so a reduced hand would be misread as
-        // the whole hand) — only act on it when we see a full, unreduced 14-tile hand. State
-        // 30 doesn't need this guard since we've never observed it with anything but 14.
-        if (hand.Concealed.Count != EmjOffsets.HandSize)
-            return;
+        // Our turn to discard whenever the concealed count is 14 minus a multiple of 3
+        // (14/11/8/5/2) — each prior call (chi/pon/kan) takes 3 tile-slots out of the
+        // 14-tile-equivalent total. EmjAddonReader doesn't read melds (confirmed live
+        // 2026-09-08: a post-Chi hand reads as an 11-tile fully-concealed hand, not a
+        // hand+meld), but Shanten/Ukeire only ever consult hand.Melds.Count, never the
+        // melds' actual tiles (see Engine/Shanten.cs, Engine/Ukeire.cs) — so placeholder
+        // melds of the right *count* are enough to get a correct discard choice without
+        // knowing which tiles were actually called.
+        int concealedCount = hand.Concealed.Count;
+        if (concealedCount == 0 || concealedCount % 3 != 2)
+            return; // mid-transition read, not a genuine discard-turn shape
+
+        int meldCount = (EmjOffsets.HandSize - concealedCount) / 3;
+        var handForPolicy = meldCount == 0 ? hand : new Hand(hand.Concealed, PlaceholderMelds(meldCount));
 
         string signature = string.Join(",", hand.Concealed.Select(t => t.Id).OrderBy(id => id));
         if (signature == _lastActedHandSignature)
@@ -168,7 +179,7 @@ public sealed class FFXIVMahjongBot : BotBase
         if (DateTime.UtcNow - _lastDispatchAt < MinInterActionGap)
             return;
 
-        var discard = _discardPolicy.ChooseDiscard(hand);
+        var discard = _discardPolicy.ChooseDiscard(handForPolicy);
         int slotIndex = FindSlotForTile(window, discard);
         if (slotIndex < 0)
             return;
@@ -176,6 +187,12 @@ public sealed class FFXIVMahjongBot : BotBase
         _dispatcher.Discard(window, slotIndex, _reader.ReadHandSlotRaw(window, slotIndex));
         _lastActedHandSignature = signature;
         _lastDispatchAt = DateTime.UtcNow;
+    }
+
+    private static IReadOnlyList<Meld> PlaceholderMelds(int count)
+    {
+        var placeholder = Meld.Pon(Tile.FromSuitRank(Suit.Man, 1), RelativeSeat.Kamicha);
+        return Enumerable.Repeat(placeholder, count).ToList();
     }
 
     private int FindSlotForTile(AtkAddonControl window, Tile tile)
