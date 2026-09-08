@@ -207,6 +207,27 @@ wrong on a second), **needs a second confirmation on a different tile/suit befor
 — not yet wired into `EmjOffsets`/`EmjAddonReader`. Next call prompt: read `window.Pointer +
 0x00B8` as a bare id and compare against whatever tile is actually glowing.
 
+## Next-button dispatch downgraded: reproduces the reference project's "stuck state 32" (2026-09-08)
+
+Live-hit the exact failure the reference project documented for the identical mechanism: our
+`ClickNext` (`SendAction(2,[3,14,3,0])`, "confirmed working" 2026-09-07 via an opcode sweep +
+visual check) put the addon into **state 32**, right after firing. Confirmed live: state 32
+reads `callPromptFlag(type=String, bool=True)` — a bogus/garbage read, not a real flag — and
+**manual clicking (Next, anywhere on screen, Escape) did nothing; recovery required a full
+game client restart.** Not a timing issue we can fix with a longer stability window — this is
+the game addon itself desyncing, matching the reference project's own conclusion for the same
+opcode-14-via-FireCallback approach. Their fix: route through a native `ReceiveEvent(ButtonClick)`
+call on the actual button node (id 97) + its collision node (id 4) instead of `FireCallback`
+opcode 14 — see `Mahjong.Plugin.Dalamud/Actions/InputDispatcher.cs::DispatchHandResultNext` in
+their repo. We haven't replicated this yet; unclear whether RB's `AtkAddonControl` exposes the
+native struct access (`GetNodeById`, `UldManager.SearchNodeById`, `ReceiveEvent`) that requires,
+or whether it needs to go through `ff14bot.Core.Memory.CallInjected64` instead (seen as a
+fallback path during the original 2026-09-07 opcode sweep, never used).
+
+**`AutoClickNext = false` in `FFXIVMahjongBot.cs` as of this finding — do not flip back to
+true without first confirming a non-FireCallback dispatch mechanism actually avoids state 32**,
+given the failure cost is now confirmed to be a full game-client restart, not just a stuck bot.
+
 ## Not yet mapped
 
 Pon, chi (and its variant-select sub-popup), kan (open/closed/added), riichi
