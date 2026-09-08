@@ -108,19 +108,17 @@ public sealed class FFXIVMahjongBot : BotBase
             DateTime firstSeen = _callPromptFirstSeenAt ?? DateTime.UtcNow;
             _callPromptFirstSeenAt = firstSeen;
 
-            if (!AutoPassCallPrompts)
-                return; // left for manual interaction — see AutoPassCallPrompts
-
             if (DateTime.UtcNow - firstSeen < CallPromptBlockTimeout)
             {
-                if (DateTime.UtcNow - _lastPassAttempt >= PassRetryInterval
+                if (AutoPassCallPrompts
+                    && DateTime.UtcNow - _lastPassAttempt >= PassRetryInterval
                     && DateTime.UtcNow - _lastDispatchAt >= MinInterActionGap)
                 {
                     _dispatcher.Pass(window);
                     _lastPassAttempt = DateTime.UtcNow;
                     _lastDispatchAt = DateTime.UtcNow;
                 }
-                return;
+                return; // left for manual interaction while AutoPassCallPrompts is off
             }
             // Timed out without the flag clearing — treat as a likely false positive and fall
             // through to the normal discard check below instead of blocking forever.
