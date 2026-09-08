@@ -30,6 +30,27 @@ public sealed class FFXIVMahjongBot : BotBase
     private DateTime _lastNextClickAttempt = DateTime.MinValue;
     private static readonly TimeSpan NextClickRetryInterval = TimeSpan.FromSeconds(1);
 
+    /// <summary>When we first saw <see cref="EmjOffsets.StateHandResultNext"/>, so we can require it to hold steady before acting (see <see cref="HandResultStabilityWindow"/>).</summary>
+    private DateTime? _handResultFirstSeenAt;
+
+    /// <summary>
+    /// State 29 (hand-result "Next" screen) must persist this long before we click Next. The
+    /// reference FFXIV-AutoMahjongSolver project — automating the same "Emj" addon — documented
+    /// firing this click during the result-modal's animation phase (i.e. right after a
+    /// Chi/Pon/Tsumo/etc. resolves into the result screen) stranding the addon in a stuck state
+    /// 32 that accepted no further input. Matches their empirically-tuned 3.5s window.
+    /// </summary>
+    private static readonly TimeSpan HandResultStabilityWindow = TimeSpan.FromSeconds(3.5);
+
+    /// <summary>
+    /// Minimum gap enforced between any two dispatched actions (Pass, Discard, Next — regardless
+    /// of type). Without this, a fast state-code transition (e.g. a call prompt resolving
+    /// straight into the hand-result screen) could dispatch two clicks back-to-back within the
+    /// same or adjacent Pulse ticks, which is what was observed breaking the in-game UI.
+    /// </summary>
+    private DateTime _lastDispatchAt = DateTime.MinValue;
+    private static readonly TimeSpan MinInterActionGap = TimeSpan.FromMilliseconds(500);
+
     /// <summary>
     /// When we first saw <see cref="EmjAddonReader.IsCallPromptLikelyActive"/> go true. The
     /// flag is a single-scenario heuristic (see docs/addon-capture-log.md) — real call prompts
@@ -59,6 +80,8 @@ public sealed class FFXIVMahjongBot : BotBase
         _callPromptFirstSeenAt = null;
         _lastPassAttempt = DateTime.MinValue;
         _lastNextClickAttempt = DateTime.MinValue;
+        _handResultFirstSeenAt = null;
+        _lastDispatchAt = DateTime.MinValue;
     }
 
     public override void Pulse()
@@ -78,10 +101,12 @@ public sealed class FFXIVMahjongBot : BotBase
 
             if (DateTime.UtcNow - firstSeen < CallPromptBlockTimeout)
             {
-                if (DateTime.UtcNow - _lastPassAttempt >= PassRetryInterval)
+                if (DateTime.UtcNow - _lastPassAttempt >= PassRetryInterval
+                    && DateTime.UtcNow - _lastDispatchAt >= MinInterActionGap)
                 {
                     _dispatcher.Pass(window);
                     _lastPassAttempt = DateTime.UtcNow;
+                    _lastDispatchAt = DateTime.UtcNow;
                 }
                 return;
             }
@@ -97,13 +122,22 @@ public sealed class FFXIVMahjongBot : BotBase
 
         if (stateCode == EmjOffsets.StateHandResultNext)
         {
-            if (DateTime.UtcNow - _lastNextClickAttempt >= NextClickRetryInterval)
+            DateTime resultFirstSeen = _handResultFirstSeenAt ?? DateTime.UtcNow;
+            _handResultFirstSeenAt = resultFirstSeen;
+
+            if (DateTime.UtcNow - resultFirstSeen < HandResultStabilityWindow)
+                return; // still settling — let the result-modal animation finish before clicking
+
+            if (DateTime.UtcNow - _lastNextClickAttempt >= NextClickRetryInterval
+                && DateTime.UtcNow - _lastDispatchAt >= MinInterActionGap)
             {
                 _dispatcher.ClickNext(window);
                 _lastNextClickAttempt = DateTime.UtcNow;
+                _lastDispatchAt = DateTime.UtcNow;
             }
             return;
         }
+        _handResultFirstSeenAt = null;
 
         if (stateCode != EmjOffsets.StateOurTurnDiscard && stateCode != EmjOffsets.StatePostDrawOrCallDiscard)
             return;
@@ -121,6 +155,9 @@ public sealed class FFXIVMahjongBot : BotBase
         if (signature == _lastActedHandSignature)
             return; // already dispatched for this exact hand — waiting for the game to catch up
 
+        if (DateTime.UtcNow - _lastDispatchAt < MinInterActionGap)
+            return;
+
         var discard = _discardPolicy.ChooseDiscard(hand);
         int slotIndex = FindSlotForTile(window, discard);
         if (slotIndex < 0)
@@ -128,6 +165,7 @@ public sealed class FFXIVMahjongBot : BotBase
 
         _dispatcher.Discard(window, slotIndex, _reader.ReadHandSlotRaw(window, slotIndex));
         _lastActedHandSignature = signature;
+        _lastDispatchAt = DateTime.UtcNow;
     }
 
     private int FindSlotForTile(AtkAddonControl window, Tile tile)
