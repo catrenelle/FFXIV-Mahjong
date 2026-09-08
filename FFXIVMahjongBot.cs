@@ -14,10 +14,11 @@ namespace FFXIVMahjong;
 /// <summary>
 /// RebornBuddy botbase for Doman Mahjong. Current scope (see docs/addon-capture-log.md for
 /// what's confirmed vs. still unmapped): reads our own hand, discards efficiently every turn,
-/// and passes on any call prompt (Chi/Pon/etc.) rather than accepting one. It doesn't yet
-/// accept calls, declare riichi, or claim tsumo/ron — accepting a call needs two things we
-/// don't have yet: knowing which tile is being offered, and meld tracking (so our internal
-/// hand model doesn't desync once a meld exists).
+/// passes on any call prompt (Chi/Pon/etc.) rather than accepting one, and dismisses the
+/// hand-result "Next" screen. It doesn't yet accept calls, declare riichi, or claim
+/// tsumo/ron — accepting a call needs two things we don't have yet: knowing which tile is
+/// being offered, and meld tracking (so our internal hand model doesn't desync once a meld
+/// exists).
 /// </summary>
 public sealed class FFXIVMahjongBot : BotBase
 {
@@ -26,6 +27,8 @@ public sealed class FFXIVMahjongBot : BotBase
     private readonly IDiscardPolicy _discardPolicy = new EfficiencyDiscardPolicy();
 
     private string _lastActedHandSignature = "";
+    private DateTime _lastNextClickAttempt = DateTime.MinValue;
+    private static readonly TimeSpan NextClickRetryInterval = TimeSpan.FromSeconds(1);
 
     /// <summary>
     /// When we first saw <see cref="EmjAddonReader.IsCallPromptLikelyActive"/> go true. The
@@ -55,6 +58,7 @@ public sealed class FFXIVMahjongBot : BotBase
         _lastActedHandSignature = "";
         _callPromptFirstSeenAt = null;
         _lastPassAttempt = DateTime.MinValue;
+        _lastNextClickAttempt = DateTime.MinValue;
     }
 
     public override void Pulse()
@@ -90,6 +94,17 @@ public sealed class FFXIVMahjongBot : BotBase
         }
 
         int stateCode = _reader.ReadStateCode(window);
+
+        if (stateCode == EmjOffsets.StateHandResultNext)
+        {
+            if (DateTime.UtcNow - _lastNextClickAttempt >= NextClickRetryInterval)
+            {
+                _dispatcher.ClickNext(window);
+                _lastNextClickAttempt = DateTime.UtcNow;
+            }
+            return;
+        }
+
         if (stateCode != EmjOffsets.StateOurTurnDiscard && stateCode != EmjOffsets.StatePostDrawOrCallDiscard)
             return;
 

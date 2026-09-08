@@ -50,6 +50,15 @@ public sealed class EmjActionDispatcher
     public void Pass(AtkAddonControl window) =>
         window.SendAction(2, [IntType, CallPromptOpcode, IntType, 1]);
 
+    /// <summary>
+    /// Dismisses the hand-result "Next" screen. Confirmed live 2026-09-07 via an opcode sweep
+    /// (0-13 were no-ops; 14 moved the state off 29 and was visually confirmed to click Next).
+    /// </summary>
+    private const int HandResultNextOpcode = 14;
+
+    public void ClickNext(AtkAddonControl window) =>
+        window.SendAction(2, [IntType, HandResultNextOpcode, IntType, 0]);
+
     public void CallKan(AtkAddonControl window) =>
         throw new NotSupportedException("Kan dispatch opcode not yet captured — see docs/addon-capture-log.md.");
 

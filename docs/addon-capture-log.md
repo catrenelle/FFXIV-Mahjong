@@ -94,12 +94,17 @@ Before/after around clicking the "Next" button on the hand-result screen:
   - Checked RB's own bundled bot-base source (readable, ships as `.cs`) for how other addons
     click buttons: `AtkAddonControl.FindButton(nodeId)` is only ever used to check
     `Clickable`/`IsValid`, never to actually click — every real interaction still goes through
-    `SendAction`. So there's no generic "click this button" shortcut in RB's public API;
-    Next's real opcode (or whatever non-FireCallback mechanism it uses — possibly a raw
-    `ReceiveEvent(ButtonClick)` on the button's node, which RB's `AtkAddonControl` doesn't
-    expose publicly) is still unmapped. Decided not to pursue further for now — it's a minor
-    convenience (skip one manual click per hand), not worth the jump to raw memory/vtable
-    manipulation it would likely take.
+    `SendAction`. So there's no generic "click this button" shortcut in RB's public API; Next
+    had to be a `SendAction` opcode we just hadn't tried.
+  - **SOLVED**, third attempt 2026-09-07: an automated opcode sweep (poll for state 29, then
+    try `SendAction(2, [3, opcode, 3, 0])` for opcode 0-25, checking state after each) found
+    it — opcodes 0-13 were harmless no-ops, **opcode 14 moved the state off 29 and was
+    visually confirmed live to actually click Next**. `EmjActionDispatcher.ClickNext`, wired
+    into `FFXIVMahjongBot.Pulse()` with a 1-second retry throttle, same pattern as Pass.
+  - (Note: the state after clicking read back as 27 in the sweep script, not the 2 seen after
+    a manual click earlier — almost certainly just a transient state caught mid-transition
+    given the sweep's tight 400ms polling; not investigated further since the visual result
+    was confirmed correct.)
 - Also confirmed real-world scoring: a dealer menzen-tsumo win for 30 fu / 1 han paid out 1500
   total / 500 each, which matches our `PointsTable`/`PaymentCalculator` output exactly (1000
   base × 1.5 dealer bonus ÷ 3 = 500). The game does track fu internally for display, but our
