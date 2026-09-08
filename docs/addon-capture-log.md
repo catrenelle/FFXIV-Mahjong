@@ -84,12 +84,22 @@ Before/after around clicking the "Next" button on the hand-result screen:
   at 30. Renamed to `StateAfterOurDiscard`; it's more likely a generic "waiting on the table"
   idle state. The actual call-prompt signal is `CallPromptFlagAtkValueIndex` (see above).
 - As with chi, we only captured the *result* of clicking Next, not the dispatch opcode to
-  trigger it ourselves. Tried `SendAction(2, [3, 11, 3, 0])` live 2026-09-07: **inconclusive**,
-  not confirmed working or broken. Both the before- and after-dispatch state reads came back
-  30 ("our turn to discard") — the Next screen had already resolved on its own (likely an
-  auto-advance/timeout, or waiting on other players) before the dispatch fired, so the test
-  never actually caught state 29. Still worth trying again, next time closer to when the
-  screen first appears.
+  trigger it ourselves.
+  - First attempt (`SendAction(2, [3, 11, 3, 0])`) was inconclusive — the Next screen had
+    already resolved on its own before the dispatch fired, so the test never actually caught
+    state 29.
+  - **Confirmed not working**, second attempt 2026-09-07: a polling script caught state 29
+    directly (0ms wait — it was already showing), dispatched the same opcode-11 pattern, and
+    state stayed at 29 afterward. This rules out the classic-button-row guess for Next.
+  - Checked RB's own bundled bot-base source (readable, ships as `.cs`) for how other addons
+    click buttons: `AtkAddonControl.FindButton(nodeId)` is only ever used to check
+    `Clickable`/`IsValid`, never to actually click — every real interaction still goes through
+    `SendAction`. So there's no generic "click this button" shortcut in RB's public API;
+    Next's real opcode (or whatever non-FireCallback mechanism it uses — possibly a raw
+    `ReceiveEvent(ButtonClick)` on the button's node, which RB's `AtkAddonControl` doesn't
+    expose publicly) is still unmapped. Decided not to pursue further for now — it's a minor
+    convenience (skip one manual click per hand), not worth the jump to raw memory/vtable
+    manipulation it would likely take.
 - Also confirmed real-world scoring: a dealer menzen-tsumo win for 30 fu / 1 han paid out 1500
   total / 500 each, which matches our `PointsTable`/`PaymentCalculator` output exactly (1000
   base × 1.5 dealer bonus ÷ 3 = 500). The game does track fu internally for display, but our
