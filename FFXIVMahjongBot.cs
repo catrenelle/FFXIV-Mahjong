@@ -89,11 +89,17 @@ public sealed class FFXIVMahjongBot : BotBase
             _callPromptFirstSeenAt = null;
         }
 
-        if (_reader.ReadStateCode(window) != EmjOffsets.StateOurTurnDiscard)
+        int stateCode = _reader.ReadStateCode(window);
+        if (stateCode != EmjOffsets.StateOurTurnDiscard && stateCode != EmjOffsets.StatePostDrawOrCallDiscard)
             return;
 
         var hand = _reader.ReadSelfHand(window);
-        if (hand.Concealed.Count == 0)
+
+        // State 6 also covers the genuine post-call reduced-hand case, which we can't
+        // correctly evaluate yet (melds aren't tracked, so a reduced hand would be misread as
+        // the whole hand) — only act on it when we see a full, unreduced 14-tile hand. State
+        // 30 doesn't need this guard since we've never observed it with anything but 14.
+        if (hand.Concealed.Count != EmjOffsets.HandSize)
             return;
 
         string signature = string.Join(",", hand.Concealed.Select(t => t.Id).OrderBy(id => id));

@@ -131,6 +131,22 @@ for the user to click manually. Two important caveats:
   `EmjAddonReader` doesn't parse melds, so accepting would silently desync our internal hand
   model from the game (it would keep treating the hand as fully concealed after a meld forms).
 
+## State 6 also means "discard now", not just "post-call reduced hand" (2026-09-07)
+
+User reported the bot again appearing to freeze on a discard turn, this time suspecting it
+needed a mouse hover over a tile to "see" the hand. A live dump taken with no hover
+disproved that directly: state code was **6** (not 30), but all 14 hand slots held valid tile
+data — a complete, unreduced hand. State 6 had only been seen before after accepting a call
+with a *reduced* hand, hence the original "post-call discard" label. The likely explanation:
+the addon flickers between 6 and 30 for the same discard turn, and a bot that only acts on 30
+can look frozen if its polling keeps landing on 6 — the "only works after I hover" theory was
+probably just the user's mouse movement coincidentally lining up with a poll that caught 30.
+
+Fixed: `FFXIVMahjongBot.Pulse()` now treats state 6 the same as state 30, but only when the
+read hand has the full 14 tiles (`EmjOffsets.HandSize`) — the genuine post-call reduced-hand
+case is left alone, since we can't correctly evaluate it yet (melds aren't tracked, so a
+reduced hand would be misread as the entire hand).
+
 ## Not yet mapped
 
 Pon, chi (and its variant-select sub-popup), kan (open/closed/added), riichi

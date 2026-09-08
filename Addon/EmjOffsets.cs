@@ -55,4 +55,17 @@ internal static class EmjOffsets
 
     /// <summary>Hand-result "Next" screen (fu/han/score breakdown). Confirmed live 2026-09-07: flips to 2 immediately after clicking Next.</summary>
     public const int StateHandResultNext = 29;
+
+    /// <summary>
+    /// Previously believed to only mean "post-accepted-call, discard from your reduced hand"
+    /// (matching the third-party research's "selfDeclareList" guess). A live capture
+    /// 2026-09-07 showed state 6 with a FULL 14-tile hand (no reduction) — i.e. it can also
+    /// mean a plain "you need to discard now" moment, same as state 30. Likely the addon
+    /// flickers between 6 and 30 for the same discard turn; a bot that only checks 30 can
+    /// appear to freeze if its polling keeps landing on 6. FFXIVMahjongBot now treats this the
+    /// same as <see cref="StateOurTurnDiscard"/>, gated on actually reading 14 tiles (to stay
+    /// safe on the genuine reduced-hand case, which we can't correctly evaluate yet since
+    /// melds aren't tracked).
+    /// </summary>
+    public const int StatePostDrawOrCallDiscard = 6;
 }
