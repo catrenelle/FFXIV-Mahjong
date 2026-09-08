@@ -200,12 +200,33 @@ button-row scan assumes for their client.
 First hypothesis (`atkValues[12] = 1`, decoding as bare id 1 = 2m) was **wrong** — confirmed
 live the actual discarded tile was 5m, not 2m; `atkValues[12]` was a coincidence, not the real
 field. A full-memory scan (0x0000-0x3000, stepping by 4 bytes, matching against 76045 [5m
-texture-offset] and 4 [bare id]) found exactly one hit: **`+0x00B8 = 4`** (bare 0-33 id, no
-texture offset) — a single clean match, no noise. This is our current best hypothesis for the
-offered-tile field, but per the aka-dora lesson (a formula that fit one data point turned out
-wrong on a second), **needs a second confirmation on a different tile/suit before trusting it**
-— not yet wired into `EmjOffsets`/`EmjAddonReader`. Next call prompt: read `window.Pointer +
-0x00B8` as a bare id and compare against whatever tile is actually glowing.
+texture-offset] and 4 [bare id]) found exactly one hit: `+0x00B8 = 4` (bare 0-33 id, no texture
+offset) — a single clean match, no noise at the time.
+
+**Second hypothesis also wrong.** A live Pon prompt (East discarded Green Dragon, id 32) let us
+retest `+0x00B8` before touching anything: it still read `4` — stale, not tracking the new tile.
+The same Pon capture's full 109-entry AtkValues dump showed `[4]` and `[21]` both reading 76073
+(Green Dragon, texture-offset) — a tempting match, and `[21]` sits right at the edge of the
+reference project's own `ponClaimScanLo=16..ponClaimScanHi=21` window for their client. But a
+third capture (a fresh Chi, East discarded 9m) disproved this too: `[21]` still read the *old*
+76073 from the previous Pon, not 9m's value (76049) — confirming both `+0x00B8` and `[21]` are
+stale/reused buffer contents that don't get cleared between prompts, not live fields.
+
+**Third candidate, unconfirmed.** That same 9m-Chi capture's full dump showed `[18] = 8` — a
+bare 0-33 id that's exactly 9m. But indices 16-21 don't line up structurally between the two
+Chi captures at all: the first (5m offered) had texture-offset values in every one of those
+slots with no bare id anywhere and never matched 5m anywhere in the array; this one has a `-1`
+sentinel mixed with a bare id. That drift suggests the layout in this window depends on how
+many candidate melds/buttons the game is juggling for a given hand shape, not a fixed slot with
+a fixed meaning — so `[18]=8` might be real, or might be the third coincidence tonight. Given
+two prior "confirmed" hypotheses both died on a second test, **treat this as unconfirmed** until
+tested against a clearly unrelated tile value with a fresh capture, ideally with the full dump's
+`[16..21]` (or wider) window scanned for *any* bare-id match rather than assuming a fixed index.
+
+If passive AtkValues/memory polling keeps producing stale-buffer false positives, the offered
+tile may only be available by hooking the native call in real time (as flagged since the very
+first "Not yet mapped" note in this doc) rather than reading memory snapshots after the fact —
+worth considering before sinking more live-session time into further guesses.
 
 ## Next-button dispatch downgraded: reproduces the reference project's "stuck state 32" (2026-09-08)
 
