@@ -84,9 +84,12 @@ Before/after around clicking the "Next" button on the hand-result screen:
   at 30. Renamed to `StateAfterOurDiscard`; it's more likely a generic "waiting on the table"
   idle state. The actual call-prompt signal is `CallPromptFlagAtkValueIndex` (see above).
 - As with chi, we only captured the *result* of clicking Next, not the dispatch opcode to
-  trigger it ourselves. Untested guess for next time: this is a simple single-button popup
-  (not a list widget), so the classic button-row pattern (`SendAction(2, [3, 11, 3, 0])`) is
-  worth trying — low risk, since a wrong guess just no-ops rather than costing a tile/decision.
+  trigger it ourselves. Tried `SendAction(2, [3, 11, 3, 0])` live 2026-09-07: **inconclusive**,
+  not confirmed working or broken. Both the before- and after-dispatch state reads came back
+  30 ("our turn to discard") — the Next screen had already resolved on its own (likely an
+  auto-advance/timeout, or waiting on other players) before the dispatch fired, so the test
+  never actually caught state 29. Still worth trying again, next time closer to when the
+  screen first appears.
 - Also confirmed real-world scoring: a dealer menzen-tsumo win for 30 fu / 1 han paid out 1500
   total / 500 each, which matches our `PointsTable`/`PaymentCalculator` output exactly (1000
   base × 1.5 dealer bonus ÷ 3 = 500). The game does track fu internally for display, but our
@@ -109,6 +112,24 @@ now times out the call-prompt gate after 15 continuous seconds. The call-prompt 
 (`CallPromptFlagAtkValueIndex`) is a single-scenario heuristic — if it's ever wrong on a genuine
 discard turn (stuck reading Bool=true when no prompt is actually showing), the bot no longer
 freezes indefinitely; it discards anyway once the timeout elapses.
+
+## Call-prompt auto-pass (2026-09-07)
+
+`FFXIVMahjongBot` now automatically passes on any detected call prompt rather than leaving it
+for the user to click manually. Two important caveats:
+
+- The dispatch opcode (`SendAction(2, [3, 11, 3, 1])`, opcode 11 = classic button-row,
+  option 1 = rightmost/Pass) is an **untested hypothesis** — guessed by analogy with the
+  confirmed discard opcode (7), not captured from an actual click. Low risk to try since Pass
+  is something you'd otherwise do manually anyway; needs live confirmation.
+- The call-prompt check now runs *before* the discard-state check, not gated behind it —
+  confirmed live that call prompts can appear at more than one base state code (seen at both
+  30 and 15), so checking it only under `state == 30` would miss prompts at 15.
+- Deliberately **not** wired to accept calls (Chi/Pon/etc.), even though
+  `EmjActionDispatcher.AcceptCall` exists (same opcode, option 0). Two blockers: (1) we don't
+  know where the offered tile lives in memory, so we can't decide which call makes sense: (2)
+  `EmjAddonReader` doesn't parse melds, so accepting would silently desync our internal hand
+  model from the game (it would keep treating the hand as fully concealed after a meld forms).
 
 ## Not yet mapped
 

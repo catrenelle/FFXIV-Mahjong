@@ -13,10 +13,11 @@ namespace FFXIVMahjong;
 
 /// <summary>
 /// RebornBuddy botbase for Doman Mahjong. Current scope (see docs/addon-capture-log.md for
-/// what's confirmed vs. still unmapped): reads our own hand and discards efficiently every
-/// turn. It does not yet call pon/chi/kan, declare riichi, or claim tsumo/ron — those
-/// dispatch opcodes haven't been captured yet, so those decisions are left to the game's
-/// own auto-pass/timeout behavior for now.
+/// what's confirmed vs. still unmapped): reads our own hand, discards efficiently every turn,
+/// and passes on any call prompt (Chi/Pon/etc.) rather than accepting one. It doesn't yet
+/// accept calls, declare riichi, or claim tsumo/ron — accepting a call needs two things we
+/// don't have yet: knowing which tile is being offered, and meld tracking (so our internal
+/// hand model doesn't desync once a meld exists).
 /// </summary>
 public sealed class FFXIVMahjongBot : BotBase
 {
@@ -27,15 +28,18 @@ public sealed class FFXIVMahjongBot : BotBase
     private string _lastActedHandSignature = "";
 
     /// <summary>
-    /// When we started being blocked by <see cref="EmjAddonReader.IsCallPromptLikelyActive"/>
-    /// while otherwise ready to discard. The call-prompt flag is a single-scenario heuristic
-    /// (see docs/addon-capture-log.md) — real call prompts resolve in a few seconds, so if this
-    /// has been blocking far longer than that, it's more likely a stale/misread flag than an
-    /// actual pending decision, and we self-correct rather than freezing indefinitely.
+    /// When we first saw <see cref="EmjAddonReader.IsCallPromptLikelyActive"/> go true. The
+    /// flag is a single-scenario heuristic (see docs/addon-capture-log.md) — real call prompts
+    /// resolve in a few seconds once we start clicking Pass, so if this has been active far
+    /// longer than that, it's more likely a stale/misread flag on a genuine discard turn than
+    /// an actual pending decision, and we stop trusting it rather than freezing indefinitely.
     /// </summary>
-    private DateTime? _callPromptBlockedSince;
+    private DateTime? _callPromptFirstSeenAt;
+
+    private DateTime _lastPassAttempt = DateTime.MinValue;
 
     private static readonly TimeSpan CallPromptBlockTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan PassRetryInterval = TimeSpan.FromSeconds(1);
 
     public override string Name => "FFXIV Mahjong";
     public override PulseFlags PulseFlags => PulseFlags.All;
@@ -49,7 +53,8 @@ public sealed class FFXIVMahjongBot : BotBase
     public override void Start()
     {
         _lastActedHandSignature = "";
-        _callPromptBlockedSince = null;
+        _callPromptFirstSeenAt = null;
+        _lastPassAttempt = DateTime.MinValue;
     }
 
     public override void Pulse()
@@ -57,28 +62,35 @@ public sealed class FFXIVMahjongBot : BotBase
         if (!_reader.TryGetWindow(out AtkAddonControl window))
             return;
 
-        if (_reader.ReadStateCode(window) != EmjOffsets.StateOurTurnDiscard)
-        {
-            _callPromptBlockedSince = null;
-            return;
-        }
-
-        // The base state code alone doesn't move when a call-prompt modal (Chi/Pass, etc.) is
-        // layered on top of the discard surface — confirmed live 2026-09-07, see
-        // docs/addon-capture-log.md. Without this check we'd risk discarding while someone
-        // else's call decision (or ours) is still pending. Timed out below in case the flag
-        // itself is ever wrong on a genuine discard turn.
+        // Confirmed live 2026-09-07: call prompts (Chi/Pass) can appear at more than one base
+        // state code (seen at both 30 and 15), so this is checked before the discard-state
+        // check below, not gated behind it. Untested dispatch opcode (see
+        // EmjActionDispatcher.Pass) — timed out below in case it's wrong or the flag itself
+        // misreads on a genuine discard turn.
         if (_reader.IsCallPromptLikelyActive(window))
         {
-            DateTime blockedSince = _callPromptBlockedSince ?? DateTime.UtcNow;
-            _callPromptBlockedSince = blockedSince;
-            if (DateTime.UtcNow - blockedSince < CallPromptBlockTimeout)
+            DateTime firstSeen = _callPromptFirstSeenAt ?? DateTime.UtcNow;
+            _callPromptFirstSeenAt = firstSeen;
+
+            if (DateTime.UtcNow - firstSeen < CallPromptBlockTimeout)
+            {
+                if (DateTime.UtcNow - _lastPassAttempt >= PassRetryInterval)
+                {
+                    _dispatcher.Pass(window);
+                    _lastPassAttempt = DateTime.UtcNow;
+                }
                 return;
+            }
+            // Timed out without the flag clearing — treat as a likely false positive and fall
+            // through to the normal discard check below instead of blocking forever.
         }
         else
         {
-            _callPromptBlockedSince = null;
+            _callPromptFirstSeenAt = null;
         }
+
+        if (_reader.ReadStateCode(window) != EmjOffsets.StateOurTurnDiscard)
+            return;
 
         var hand = _reader.ReadSelfHand(window);
         if (hand.Concealed.Count == 0)
