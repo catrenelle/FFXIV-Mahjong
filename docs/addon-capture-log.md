@@ -228,6 +228,16 @@ fallback path during the original 2026-09-07 opcode sweep, never used).
 true without first confirming a non-FireCallback dispatch mechanism actually avoids state 32**,
 given the failure cost is now confirmed to be a full game-client restart, not just a stuck bot.
 
+**Lead for next capture session**: user observed the Next button is visibly disabled/grayed
+until the result screen finishes settling, then becomes clickable — the game itself signals
+readiness rather than us having to guess a fixed wait. Our `HandResultStabilityWindow` (3.5s)
+is a copied estimate, not a measured value, and animation length likely varies (network lag,
+etc.), so a timer alone could still click too early on a slower hand. Next time on that screen:
+dump the button node's state (likely node 97, per the reference project's node ID — see above)
+while grayed out vs. right after it becomes clickable, and diff for an enabled/interactable/
+alpha flag. Same node-access work needed for the `ReceiveEvent` dispatch fix above, so worth
+doing together.
+
 ## Not yet mapped
 
 Pon, chi (and its variant-select sub-popup), kan (open/closed/added), riichi
