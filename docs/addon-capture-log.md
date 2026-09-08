@@ -168,6 +168,45 @@ read hand has the full 14 tiles (`EmjOffsets.HandSize`) — the genuine post-cal
 case is left alone, since we can't correctly evaluate it yet (melds aren't tracked, so a
 reduced hand would be misread as the entire hand).
 
+## Post-call discard turn: new state 3 + meld-count inference (2026-09-08)
+
+User reported auto-discard stopped working after manually accepting a Chi (opponent discard
+5m, called with 3m+4m — a captured Chi/Pass prompt confirmed via a full AtkValues dump and a
+memory scan, see below). Diagnostic dump right after accepting: `state=3 handCount=11` — a
+previously-unmapped state code, and a concealed hand smaller than the required 14 (bot's
+discard trigger required an exact 14-tile hand, so it silently declined to act).
+
+Fix didn't need real meld tracking: `Shanten.Calculate`/`Ukeire.UsefulTileIds` only ever
+consult `hand.Melds.Count`, never the melds' actual tiles (confirmed by reading
+`Engine/Shanten.cs`/`Engine/Ukeire.cs`). The meld *count* is derivable arithmetically from the
+concealed tile total alone — 14/11/8/5/2 tiles = 0/1/2/3/4 prior calls, since each call takes 3
+tile-slots out of the 14-tile-equivalent total. `FFXIVMahjongBot.Pulse()` now builds a `Hand`
+with that many placeholder `Meld` objects (arbitrary tile content — never inspected) whenever
+`concealedCount % 3 == 2`, and added `EmjOffsets.StatePostCallDiscard = 3` to the recognized
+discard-trigger states. Verified live that this produces the identical discard choice a real
+meld would, using the actual captured post-Chi hand as a test case.
+
+Note this only fixes the *discard* side. Accepting calls ourselves (Chi/Pon/Kan/Riichi/
+Tsumo/Ron) still needs the real offered-tile location and is unaffected by this fix — see below.
+
+## Offered-tile location for Chi (2026-09-08) — still unmapped, first attempt was wrong
+
+Captured a real Chi/Pass prompt: opponent (South, our kamicha) discarded 5m, hand held
+3m+4m+8m/4p+8p+9p/2s+4s+5s/West/發發發. A full 50-entry AtkValues dump around the prompt
+showed nothing decoding to 5m in either raw-id or texture-offset form — the offered tile is
+**not published as a plain AtkValue** in this popup, unlike what the reference project's
+button-row scan assumes for their client.
+
+First hypothesis (`atkValues[12] = 1`, decoding as bare id 1 = 2m) was **wrong** — confirmed
+live the actual discarded tile was 5m, not 2m; `atkValues[12]` was a coincidence, not the real
+field. A full-memory scan (0x0000-0x3000, stepping by 4 bytes, matching against 76045 [5m
+texture-offset] and 4 [bare id]) found exactly one hit: **`+0x00B8 = 4`** (bare 0-33 id, no
+texture offset) — a single clean match, no noise. This is our current best hypothesis for the
+offered-tile field, but per the aka-dora lesson (a formula that fit one data point turned out
+wrong on a second), **needs a second confirmation on a different tile/suit before trusting it**
+— not yet wired into `EmjOffsets`/`EmjAddonReader`. Next call prompt: read `window.Pointer +
+0x00B8` as a bare id and compare against whatever tile is actually glowing.
+
 ## Not yet mapped
 
 Pon, chi (and its variant-select sub-popup), kan (open/closed/added), riichi
