@@ -754,3 +754,19 @@ cell 10. Kamicha now covers 13 tiles (7p, 9s, 3m, 1p, 4p, 8m, 6p, 3p, 2m, 1m, ea
 **Lesson for future pond-mining**: don't eyeball-group cells as "identical" from a quick glance at
 a small crop — always get a wide-enough crop to see all 4 corners and count the triangle marker
 before assuming two wind cells match. This almost caused a real mislabel.
+
+**Second correction, same session**: user asked why user-provided screenshots weren't used
+directly as the seeded files — good question, and checking confirmed the reasoning was right:
+the user's own South Wind screenshot has a visible fragment of a neighboring tile bleeding in at
+its edge, exactly the contamination risk pond-mining introduces (the reason those screenshots
+were only ever used for cell *identification*, with the actual seed pixels re-extracted at the
+standard 34x26 size from `auto_regionB.png`). But double-checking my own `west_kamicha.png` this
+way caught a real instance of the same problem in my own crop: cell 10 sat right above the red 6p
+tile, and the fixed-pitch grid (28px row spacing, approximate) put the crop's bottom edge 2-3px
+into that red tile. Found the true boundary by sampling raw pixel rows (tile body: y=298-324;
+red 6p starts at y=325) and re-cropped at the corrected offset — clean now, all 3 corner
+triangles visible, no bleed. Checked `east_kamicha.png`, `south_kamicha.png`, and `1m_kamicha.png`
+the same way — all three already clean, this was specific to West's position in the grid.
+**Lesson**: the fixed-pitch grid is only approximate; verify each pond-mined crop's boundary
+against raw pixel data (or at least a wide zoomed view) before trusting it, don't assume the same
+offset that worked for one cell works for all.
