@@ -290,6 +290,44 @@ project's kamicha-discard-count-byte offset (`0x0D9E`, 2 bytes off — consisten
 confirmed on our own `KamichaScore=0x0DA0`. Not the tile field, but a real, well-grounded offset
 worth keeping for future opponent-seat meld-inference work.
 
+**Two more improvements, then a final retest — still negative (2026-09-08, same session).**
+Found `TwoInt.AsUTF8String` (RB's own `TwoInt` struct) — we'd been reading String8-typed
+AtkValues via `.Int` this whole time, which is meaningless packed bytes for a string entry;
+we'd never actually seen what button labels say, only inferred "probably a label" from the
+type. Wired it in (`EmjAddonReader.DumpAtkValueSnapshot` now populates a `Text` field). Also
+found our client's confirmed offsets (`SelfScore=0x0500`, `KamichaScore=0x0DA0`,
+`HandArrayStart=0x0DB8`) are byte-identical to the reference project's own "Emj" (EU) layout —
+same structural client — and that `AtkAddonControl.TryFindAgentInterface()` resolves the agent
+actually *bound to this window*, a more reliable path than guessing `AgentId=5`. Retested Agent
+with the corrected resolution on a real Pon (East discarded North Wind): **still zero byte
+changes** across the full snapshot, while AtkValues correctly captured the same transition
+(`[6]`/`[7]`/`[8]` decoded as `"Pass"`/`"Pon"`/`"Pass"` — confirms English client, confirms the
+string decode works). This settles it: AgentEmj isn't a wrong-id artifact, it's just not tied to
+per-hand mahjong state at all on this client. Delayed diff empty again too. Conclusion from the
+prior section stands, now on a 4th/5th/6th real capture with better tooling, not weaker evidence.
+
+## Screenshot + template-match: a different approach entirely (2026-09-08)
+
+Since every passive-memory avenue is exhausted, pivoted to a fundamentally different idea: crop
+a screenshot of the highlighted/glowing tile and compare it against known tile art instead of
+reading a value out of memory at all. Two blockers, one solved:
+
+- **Reference images**: solved. `Assets/TileReference/` now has 32 of 34 tile kinds (missing
+  White Dragon, which renders blank), pixel-boundary-sliced from the official Square Enix
+  Lodestone Doman Mahjong guide page — clean, official Doman-style art (not the "Traditional"
+  style also shown on that page, which the game doesn't actually render), not screenshots of our
+  own gameplay (which would need many hands played to naturally encounter all 34 kinds). See
+  `Assets/TileReference/README.md` for provenance and filenames.
+- **Locating the crop region on screen**: still open. We have `AtkAddonControl.Bounds`
+  (confirmed to exist via RB reflection) for the *window's* screen-space rectangle, but no
+  per-node bounds — RB doesn't expose child-node position the way it exposes button/label text.
+  Likely path: since the UI layout is fixed (each seat's discard pile always renders in the same
+  relative position within the window), empirically determine kamicha's discard-pile region as
+  a fixed offset from the window bounds by comparing a live screenshot against the reported
+  `Bounds` next time a call prompt is up. Not yet attempted.
+- No native screenshot API found in RB itself — would need standard .NET screen capture
+  (`Graphics.CopyFromScreen` or equivalent), not RB-specific.
+
 ## Next-button dispatch downgraded: reproduces the reference project's "stuck state 32" (2026-09-08)
 
 Live-hit the exact failure the reference project documented for the identical mechanism: our
