@@ -358,20 +358,31 @@ public sealed class FFXIVMahjongBot : BotBase
     {
         if (_tileMatcher is null)
             return null;
-        if (window.Bounds is not { Width: > 0, Height: > 0 } boundsF)
+        try
+        {
+            if (window.Bounds is not { Width: > 0, Height: > 0 } boundsF)
+                return null;
+
+            var bounds = Rectangle.Round(boundsF);
+            using var captureA = ScreenTileMatcher.CaptureRegion(bounds);
+            Thread.Sleep(200);
+            using var captureB = ScreenTileMatcher.CaptureRegion(bounds);
+
+            var changed = ScreenTileMatcher.FindChangedRegion(captureA, captureB);
+            if (changed is not { Width: >= 4, Height: >= 4 } region)
+                return null;
+
+            using var crop = captureB.Clone(region, captureB.PixelFormat);
+            return _tileMatcher.MatchTile(crop);
+        }
+        catch (Exception ex)
+        {
+            // The addon window (or its underlying memory) can go stale mid-capture if the
+            // prompt closes/changes while we're mid-screenshot — fail safe rather than crash
+            // Pulse(), same as DumpAgentEmjRawMemorySnapshot's existing try/catch.
+            Logging.Write($"[FFXIVMahjong] screen-match capture failed: {ex.Message}");
             return null;
-
-        var bounds = Rectangle.Round(boundsF);
-        using var captureA = ScreenTileMatcher.CaptureRegion(bounds);
-        Thread.Sleep(200);
-        using var captureB = ScreenTileMatcher.CaptureRegion(bounds);
-
-        var changed = ScreenTileMatcher.FindChangedRegion(captureA, captureB);
-        if (changed is not { Width: >= 4, Height: >= 4 } region)
-            return null;
-
-        using var crop = captureB.Clone(region, captureB.PixelFormat);
-        return _tileMatcher.MatchTile(crop);
+        }
     }
 
     /// <summary>Logs every AtkValues index that differs between two snapshots — used to catch what actually changed at a state transition instead of guessing from one dump in isolation.</summary>
