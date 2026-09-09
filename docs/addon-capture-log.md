@@ -736,3 +736,10 @@ NOT track chronological discard order cleanly (2m, the most recent discard, sits
 earlier one, in the grid) — the real pond likely wraps into rows/columns on its own logic that a
 naive fixed-pitch slice doesn't reproduce. Fine for this cell-by-cell identification workflow,
 but don't assume grid position = discard order for future pond-mining.
+
+Third pond tile resolved immediately after: cells 6, 10, and 14 (the "curled" glyph noted as a
+repeated second wind type) were all confirmed **South** via another user screenshot. Picked cell
+6 to seed — cleanest crop of the three (10 had a pink bleed from the 6p tile below it, 14 had
+green felt bleeding in on two sides, consistent with sitting at the end of a row). Seeded
+`south_kamicha.png` — kamicha now covers 12 tiles (7p, 9s, 3m, 1p, 4p, 8m, 6p, 3p, 2m, 1m, east,
+south).
