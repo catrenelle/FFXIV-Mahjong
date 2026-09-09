@@ -624,3 +624,25 @@ region is stronger evidence than a marginal score difference between two still-s
 Ground truth via `.scratch/CallPolicyCheck`: fed 7p → PASS (matches the live log exactly). Fed
 the real 4p → `ShouldCallChi` returns **2p+3p**, matching the user's actual call. Seeded
 `4p_kamicha.png` — kamicha now has 5 tiles covered (7p, 9s, 3m, 1p, 4p).
+
+## A genuine region-finder false positive, not a coverage gap (2026-09-08 later)
+
+Same hand continues (East/kamicha discarded 8m for a Pon this time; hand `2m,2m,4m,5m,5m,8m,8m,
+6p,4s,5s` matches the post-4p-Chi hand minus a Green discard). Screen-match guessed `6s` at score
+248.9 — deep in the "wrong" range, and this time genuinely wrong, not just under-covered:
+`auto_regionB_marked.png` shows the detected region sitting right at the play area's left
+boundary, immediately next to Mandragora's (East's) portrait, not on any tile at all. The logged
+region X (151) lands almost exactly on `playArea.X` (`addonInClient.Width * 0.15` ≈ 151 for a
+~1008px-wide client) — i.e. `region.X` relative to the play area is ~0, right at the edge the
+15% left-margin is supposed to clear of the portrait strip. Didn't seed anything from this one —
+the crop itself isn't a tile, seeding it would poison the library with garbage, unlike every
+prior "wrong guess" so far which were all real tile crops just missing a reference.
+
+Ground truth (8m, Pon) checked anyway via `.scratch/CallPolicyCheck`: fed the garbage 6s, policy
+says `CHI (4s+5s)` (matches the live log exactly). Fed the real 8m, `ShouldCallPon` returns
+**true** — another real missed call, same shape as the earlier 8m/toimen case.
+
+Not fixed yet — one data point isn't enough to safely retune the 15% play-area margin (moving it
+could just shift the same edge-effect problem elsewhere without evidence). Worth revisiting if
+this recurs: either widen the left margin a few more percent, or reject any detected region that
+lands within a few pixels of the play area's own boundary before trusting it.
