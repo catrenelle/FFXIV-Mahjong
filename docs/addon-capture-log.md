@@ -571,3 +571,26 @@ matching the user's actual call. Notable: the wrong tile happened to produce the
 response to a 3m discard) — a concrete reminder that a superficially-plausible-looking logged
 recommendation can't be trusted even when the verb matches, until tile identification is solid.
 Seeded `3m_kamicha.png` — third tile now covered at kamicha (7p, 9s, 3m).
+
+## Kamicha/toimen skew profiles not yet well-separated at n=1 (2026-09-08 later)
+
+Another South/kamicha discard (7p again, region 300,254) came back correctly identified as `7p`,
+but a direct per-reference score check (`.scratch/CallPolicyCheck`, ad hoc — not committed)
+showed the *actual* winning reference internally was `7p_toimen` (82.3) over `7p_kamicha` (97.0),
+despite this genuinely being a kamicha discard (user-confirmed). Harmless here only because both
+position variants normalize to the same tile name after suffix-stripping — the underlying risk
+is real: with just one sample per position, kamicha's and toimen's skew profiles aren't yet
+well-separated, so two *different* tiles at those two positions could eventually cross-match once
+their raw pixel patterns happen to be similar. Noted, not fixed — no multi-sample-per-position
+scheme exists yet (would need e.g. a `_kamicha_2` numbering convention and a `NormalizeTileName`
+update); deferred until coverage-building actually surfaces a real misidentification from it,
+rather than building the infrastructure preemptively.
+
+Also observed: South's kamicha discards now span two visibly different screen-X clusters
+(~336-338 for the 9s/3m captures, ~300 for the two 7p/1p captures after them) — consistent with
+a discard pile arranged in a growing grid (multiple discards per row before wrapping), not a
+single fixed slot per seat. Don't use raw region coordinates alone to judge which relative seat a
+capture belongs to; trust the user's stated seat identity.
+
+Next capture (South, 1p, region 300,308) matched correctly too (score 100.6) and was seeded as
+`1p_kamicha.png` — kamicha now has 4 tiles covered (7p, 9s, 3m, 1p).
