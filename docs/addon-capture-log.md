@@ -556,3 +556,18 @@ a bug — a genuine divergence between the conservative heuristic and the human'
 may have been reading an angle (sanshoku, forward planning) the heuristic's yakuhai/toitoi/
 honitsu/tanyao checklist doesn't model. Seeded `9s_kamicha.png` — second tile now covered at the
 kamicha position (7p, 9s).
+
+## Third kamicha-position tile (3m); recommendation lands on the right call type by pure coincidence (2026-09-08 later)
+
+Same hand continues (the 9s Chi above was evidently passed on, not accepted — this capture's
+hand swaps the old `3s` for a newly-drawn `6p`, no meld reduction, still 13 concealed/0 melds).
+South (kamicha again) discarded 3m; screen-match guessed **7p** (score 88.7, no kamicha-side man
+reference existed yet). User confirmed the real tile was 3m, calling Chi with 4m+5m.
+
+Checked via `.scratch/CallPolicyCheck`: fed 7p, the policy says `CHI (5p+6p)` — matching the
+live log exactly. Fed the real 3m, the policy *also* says CHI, but correctly with **4m+5m** —
+matching the user's actual call. Notable: the wrong tile happened to produce the right call
+*type* (CHI) by coincidence, but with completely wrong tiles (5p+6p, which aren't even a valid
+response to a 3m discard) — a concrete reminder that a superficially-plausible-looking logged
+recommendation can't be trusted even when the verb matches, until tile identification is solid.
+Seeded `3m_kamicha.png` — third tile now covered at kamicha (7p, 9s, 3m).
