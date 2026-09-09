@@ -770,3 +770,20 @@ the same way — all three already clean, this was specific to West's position i
 **Lesson**: the fixed-pitch grid is only approximate; verify each pond-mined crop's boundary
 against raw pixel data (or at least a wide zoomed view) before trusting it, don't assume the same
 offset that worked for one cell works for all.
+
+**Third correction, same session**: user pushed back that the "fix" above still wasn't clean —
+correctly so. The real problem was systemic, not a one-off: the grid's column X-offset (331) was
+consistently ~3-5px too far left for *every* tile in this column, not just West. Confirmed via
+raw pixel sampling across multiple rows (not just one, to rule out mistaking character-glyph ink
+for a tile edge): a genuinely consistent dark border band sits at x=332-335 before each tile's own
+face starts at x=336, and another at x=368-371 before felt starts at x=372 — stable across East,
+South, and West's rows alike, so it's a true shared tile-boundary artifact, not noise. East
+specifically had a *neighboring tile* (not felt) directly adjacent at x=328-331, which the
+original x=331 crop start was already inside — explaining the neighbor-fragment bleed the user
+first flagged. Re-extracted all four (east, south, 1m, west) at the corrected x=334–372 (38px
+wide, vs the original 34px), keeping each tile's own natural rounded-corner shape (a small sliver
+of felt at each corner is inherent to the tile's rendering, same as the user's own clean
+screenshots — not contamination). Re-verified clean this time before committing.
+
+**Lesson, reinforced**: when a boundary problem shows up in one grid cell, check whether it's a
+systemic column/row offset issue before treating it as a one-off — it was.
