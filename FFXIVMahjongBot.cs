@@ -423,16 +423,14 @@ public sealed class FFXIVMahjongBot : BotBase
                 playFrames.Add(full.Clone(playArea, full.PixelFormat));
             }
 
-            // Aspect ratio matters here, not just rough scale — our reference tiles are ~0.7-0.73
-            // width/height (taller than wide, e.g. north.png is 32x44). A first version derived
-            // width and height independently (playArea.Width/12, playArea.Height/8), which came
-            // out squarer (~0.86) than any real tile; MatchTile resizes the crop to fit each
-            // reference's exact dimensions, so a wrong-shaped crop gets stretched/squished before
-            // comparison, distorting the character and hurting the match even when the *location*
-            // is correct (live-caught 2026-09-08: region landed exactly on the real glowing North
-            // Wind tile, but still matched as "9m").
-            int windowHeight = Math.Max(20, playArea.Height / 8);
-            int windowWidth = Math.Max(16, (int)(windowHeight * 0.72));
+            // Size tuned from a direct pixel measurement (2026-09-08), not a visual guess: a 4x-
+            // zoomed crop of a real captured tile measured ~35x45 (ratio ~0.78), while the
+            // previous formula (playArea.Height/8 ~= 56 tall) was 11px taller than the real tile
+            // — dragging a chunk of empty green felt below it into every comparison and diluting
+            // the match even when the search *location* was already exactly correct (live-caught:
+            // region landed squarely on the real glowing North Wind tile, still matched as "9m").
+            int windowHeight = Math.Max(20, playArea.Height / 10);
+            int windowWidth = Math.Max(16, (int)(windowHeight * 0.78));
 
             // The central wall-count/turn indicator (the "61" diamond, its 4 dots, and the star)
             // has its own idle animation too — user-caught 2026-09-08 via side-by-side crops.
