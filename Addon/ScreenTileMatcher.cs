@@ -196,8 +196,13 @@ public sealed class ScreenTileMatcher
     /// genuinely animating tile stays high-range across the whole sample regardless of exactly
     /// when in the capture window its brightness swings, while a one-off artifact only shows up
     /// in the one or two frames it actually occurred in and contributes far less total range.
+    /// <paramref name="excludeRegions"/> zeroes out range contribution from those pixels first —
+    /// user-caught 2026-09-08: the central wall-count/turn-indicator (dots + star around the
+    /// "61" counter) has its own idle animation too, a second legitimate competing signal inside
+    /// the play area that isn't the tile we're after.
     /// </summary>
-    public static Rectangle? FindMostVariableRegion(IReadOnlyList<Bitmap> frames, int windowWidth, int windowHeight)
+    public static Rectangle? FindMostVariableRegion(
+        IReadOnlyList<Bitmap> frames, int windowWidth, int windowHeight, IReadOnlyList<Rectangle>? excludeRegions = null)
     {
         if (frames.Count < 2)
             return null;
@@ -213,15 +218,21 @@ public sealed class ScreenTileMatcher
         {
             for (int x = 0; x < w; x++)
             {
-                int min = int.MaxValue, max = int.MinValue;
-                foreach (var f in frames)
+                int rangeValue = 0;
+                bool excluded = excludeRegions is not null && excludeRegions.Any(r => r.Contains(x, y));
+                if (!excluded)
                 {
-                    Color c = f.GetPixel(x, y);
-                    int sum = c.R + c.G + c.B;
-                    if (sum < min) min = sum;
-                    if (sum > max) max = sum;
+                    int min = int.MaxValue, max = int.MinValue;
+                    foreach (var f in frames)
+                    {
+                        Color c = f.GetPixel(x, y);
+                        int sum = c.R + c.G + c.B;
+                        if (sum < min) min = sum;
+                        if (sum > max) max = sum;
+                    }
+                    rangeValue = max - min;
                 }
-                sat[y + 1, x + 1] = (max - min) + sat[y, x + 1] + sat[y + 1, x] - sat[y, x];
+                sat[y + 1, x + 1] = rangeValue + sat[y, x + 1] + sat[y + 1, x] - sat[y, x];
             }
         }
 

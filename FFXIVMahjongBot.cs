@@ -425,7 +425,16 @@ public sealed class FFXIVMahjongBot : BotBase
 
             int windowWidth = Math.Max(20, playArea.Width / 12);
             int windowHeight = Math.Max(20, playArea.Height / 8);
-            var tileRegion = ScreenTileMatcher.FindMostVariableRegion(playFrames, windowWidth, windowHeight);
+
+            // The central wall-count/turn indicator (the "61" diamond, its 4 dots, and the star)
+            // has its own idle animation too — user-caught 2026-09-08 via side-by-side crops.
+            // It sits roughly centered in the play area, well clear of the discard-tile clusters
+            // around it, so a modest centered exclusion zone removes it as a competing signal
+            // without risking clipping any real tile.
+            var centerExclusion = new Rectangle(
+                (int)(playArea.Width * 0.40), (int)(playArea.Height * 0.40),
+                (int)(playArea.Width * 0.20), (int)(playArea.Height * 0.20));
+            var tileRegion = ScreenTileMatcher.FindMostVariableRegion(playFrames, windowWidth, windowHeight, [centerExclusion]);
             if (tileRegion is not { } region)
                 return null;
 
@@ -451,6 +460,10 @@ public sealed class FFXIVMahjongBot : BotBase
                     {
                         using var playAreaPen = new Pen(Color.Yellow, 1);
                         mg.DrawRectangle(playAreaPen, playArea);
+                        using var excludePen = new Pen(Color.DeepSkyBlue, 1);
+                        mg.DrawRectangle(excludePen, new Rectangle(
+                            playArea.X + centerExclusion.X, playArea.Y + centerExclusion.Y,
+                            centerExclusion.Width, centerExclusion.Height));
                         using var pen = new Pen(Color.Red, 2);
                         mg.DrawRectangle(pen, regionInFullPanel);
                     }
