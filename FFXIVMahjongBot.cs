@@ -98,6 +98,9 @@ public sealed class FFXIVMahjongBot : BotBase
     /// </summary>
     private EmjAddonReader.AtkValueSnapshot[]? _lastNormalAtkSnapshot;
 
+    /// <summary>Same idea as <see cref="_lastNormalAtkSnapshot"/> but for the addon's raw struct memory — covers fields that never go through AtkValues at all (confirmed live 2026-09-08: a Chi's offered tile changed nothing in a 109-entry AtkValues diff, so it must live here instead).</summary>
+    private int[]? _lastNormalRawSnapshot;
+
     /// <summary>Snapshot taken the instant state 29 (hand-result screen) first appears, so we can diff it against the snapshot right as <see cref="HandResultStabilityWindow"/> elapses — hunting for whatever flag flips when the Next button visibly becomes clickable (user-observed 2026-09-08).</summary>
     private EmjAddonReader.AtkValueSnapshot[]? _handResultFirstSeenSnapshot;
     private bool _handResultReadyDiffLogged;
@@ -120,6 +123,7 @@ public sealed class FFXIVMahjongBot : BotBase
         _handResultFirstSeenAt = null;
         _lastDispatchAt = DateTime.MinValue;
         _lastNormalAtkSnapshot = null;
+        _lastNormalRawSnapshot = null;
         _handResultFirstSeenSnapshot = null;
         _handResultReadyDiffLogged = false;
     }
@@ -145,6 +149,11 @@ public sealed class FFXIVMahjongBot : BotBase
                 var after = _reader.DumpAtkValueSnapshot(window);
                 LogAtkValueDiff("call-prompt appeared", before, after);
             }
+            if (justAppeared && _lastNormalRawSnapshot is { } rawBefore)
+            {
+                var rawAfter = _reader.DumpRawMemorySnapshot(window);
+                LogRawMemoryDiff("call-prompt appeared", rawBefore, rawAfter);
+            }
 
             if (DateTime.UtcNow - firstSeen < CallPromptBlockTimeout)
             {
@@ -165,6 +174,7 @@ public sealed class FFXIVMahjongBot : BotBase
         {
             _callPromptFirstSeenAt = null;
             _lastNormalAtkSnapshot = _reader.DumpAtkValueSnapshot(window);
+            _lastNormalRawSnapshot = _reader.DumpRawMemorySnapshot(window);
         }
 
         int stateCode = _reader.ReadStateCode(window);
@@ -257,6 +267,31 @@ public sealed class FFXIVMahjongBot : BotBase
             if (b.Type != a.Type || b.Int != a.Int)
                 Logging.Write($"[FFXIVMahjong]   [{i}] {b.Type}:{b.Int} -> {a.Type}:{a.Int}");
         }
+    }
+
+    /// <summary>Logs every raw-memory int32 that differs between two snapshots, byte-offset-addressed to line up with EmjOffsets constants. Annotates anything that plausibly decodes as a tile id (bare 0-33, or texture-offset) so a match doesn't need manual arithmetic to spot.</summary>
+    private static void LogRawMemoryDiff(string label, int[] before, int[] after)
+    {
+        Logging.Write($"[FFXIVMahjong] raw diff ({label}): before.Length={before.Length} after.Length={after.Length}");
+        int max = Math.Min(before.Length, after.Length);
+        for (int i = 0; i < max; i++)
+        {
+            if (before[i] == after[i])
+                continue;
+            int offset = i * 4;
+            string note = DecodeTileGuess(after[i]);
+            Logging.Write($"[FFXIVMahjong]   +0x{offset:X4} {before[i]} -> {after[i]}{note}");
+        }
+    }
+
+    private static string DecodeTileGuess(int raw)
+    {
+        if (raw is >= 0 and < Tile.KindCount)
+            return $" (bare tile id {raw} = {new Tile(raw)})";
+        int textureOffsetId = raw - EmjOffsets.TileTextureBase;
+        if (textureOffsetId is >= 0 and < Tile.KindCount)
+            return $" (texture-offset tile id {textureOffsetId} = {new Tile(textureOffsetId)})";
+        return "";
     }
 
     private static IReadOnlyList<Meld> PlaceholderMelds(int count)

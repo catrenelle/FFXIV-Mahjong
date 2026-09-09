@@ -122,4 +122,16 @@ public sealed class EmjAddonReader
             snapshot[i] = new AtkValueSnapshot(values[i].AtkValueType, values[i].Int);
         return snapshot;
     }
+
+    /// <summary>
+    /// Bytes of <c>AtkUnitBase*</c>-relative memory covered by a raw snapshot — matches the
+    /// reference project's own "production reads max out at DoraIndicator (+0x0FD8)" budget
+    /// with headroom, since we don't know exactly where an as-yet-unmapped field (e.g. a
+    /// call's offered tile) might live.
+    /// </summary>
+    private const int RawMemorySnapshotSize = 0x3000;
+
+    /// <summary>Raw int32s across the addon's struct memory (not the separately-allocated AtkValues array), for diffing the same way as <see cref="DumpAtkValueSnapshot"/> when a field isn't published through AtkValues at all.</summary>
+    public int[] DumpRawMemorySnapshot(AtkAddonControl window) =>
+        RBCore.Memory.ReadArray<int>(window.Pointer, RawMemorySnapshotSize / 4);
 }
