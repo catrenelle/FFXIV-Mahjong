@@ -665,3 +665,19 @@ matching the established kamicha cluster. North discarded 6p, calling Chi; scree
 4p → PASS (matches the live log exactly); fed the real 6p → `ShouldCallChi` returns **7p+8p**,
 matching the user's actual call. Seeded `6p_kamicha.png` — kamicha now covers 7 tiles (7p, 9s,
 3m, 1p, 4p, 8m, 6p).
+
+## Eighth kamicha tile (3p) — a real "should have passed" divergence, tile ID unrelated (2026-09-08 later)
+
+Same hand continues after the 6p Chi (10 concealed → 3m,4m,1p,2p,3p,8s,8s,9s,White,White after
+discarding the leftover 2s). North/kamicha discarded 3p, calling Chi with 1p+2p; screen-match
+guessed 7p (score 88.3, no 3p-kamicha reference existed).
+
+Checked via `.scratch/CallPolicyCheck`: fed 7p → PASS; fed the real 3p → **also PASS** (`null`).
+Unlike every prior divergence, this one isn't caused by the misread — both tiles land on the same
+answer. Reason: the concealed hand already contained a complete `1p,2p,3p` run *before* this
+discard. Calling Chi with 1p+2p+the offered 3p just re-forms a set already held, leaving the
+hand's own leftover 3p as dead weight to discard next, for zero net shanten change (1-shanten
+either way) while giving up the closed-hand's riichi/menzen-tsumo potential. A clean case of the
+heuristic correctly declining a call the user made anyway — worth knowing "pass" was actually the
+efficiency-optimal play here. Seeded `3p_kamicha.png` — kamicha now covers 8 tiles (7p, 9s, 3m,
+1p, 4p, 8m, 6p, 3p).
