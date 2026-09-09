@@ -228,6 +228,26 @@ tile may only be available by hooking the native call in real time (as flagged s
 first "Not yet mapped" note in this doc) rather than reading memory snapshots after the fact —
 worth considering before sinking more live-session time into further guesses.
 
+**AtkValues ruled out entirely, methodologically this time (2026-09-08, later same session).**
+Built proper before/after diff capture directly into `FFXIVMahjongBot` (`_lastNormalAtkSnapshot`,
+refreshed every Pulse while no call prompt is active; diffed against the instant one appears —
+see `LogAtkValueDiff`) instead of eyeballing single dumps that can't distinguish a genuinely new
+value from stale leftover data. First real test: a fresh Chi (North discarded 7p, id 15,
+texture-offset 76056) against a clean 109-entry diff. Only indices 2, 3, 5-8, 12, 13 changed —
+all previously-seen UI/state bookkeeping (13 is the known call-prompt flag; 12 has now read
+exactly `1` on every Chi capture regardless of which tile was offered, so it's a generic
+"a call is available" flag, not tile data) — **nothing anywhere in the array changed to 76056 or
+15.** This retroactively explains the `[4]`/`[21]`/`[18]` near-misses above: none of those values
+actually changed when their respective prompts opened, they were just already sitting there.
+AtkValues is not where this field lives, confirmed rather than assumed.
+
+Extended the same diffing to a full 0x3000-byte raw-memory snapshot of the addon's own struct
+(`DumpRawMemorySnapshot`/`LogRawMemoryDiff`), taken at the same transition point, since the field
+must live outside the AtkValues array if it's published at all. Not yet run against a real
+capture — next call prompt's log output will include a `raw diff` section alongside the `atk
+diff` one, and any changed offset that plausibly decodes as a tile id gets auto-annotated so it
+doesn't need manual arithmetic to spot.
+
 ## Next-button dispatch downgraded: reproduces the reference project's "stuck state 32" (2026-09-08)
 
 Live-hit the exact failure the reference project documented for the identical mechanism: our
