@@ -351,63 +351,85 @@ public sealed class FFXIVMahjongBot : BotBase
         _lastDispatchAt = DateTime.UtcNow;
     }
 
+    private const int ScreenMatchFrameCount = 5;
+    private static readonly TimeSpan ScreenMatchFrameDelay = TimeSpan.FromMilliseconds(150);
+
     /// <summary>
-    /// Captures the game window's own content twice, ~200ms apart, and diffs them to locate the
-    /// pulsing highlighted tile (see <see cref="ScreenTileMatcher"/>) — self-locating, no node
-    /// IDs or hardcoded offsets needed. Uses <c>PrintWindow</c> (via the game's own hwnd) rather
-    /// than a raw screen-coordinate grab, so it isn't corrupted by whatever else is on top of
-    /// the game on screen — live-caught a bad match caused by exactly that (a browser window
-    /// overlapping the game, 2026-09-08). Blocks Pulse() briefly, but only once per newly-seen
-    /// prompt (gated by the caller's `justAppeared` check), same tradeoff already accepted
-    /// elsewhere (e.g. the 3.5s hand-result stability wait).
+    /// Captures the game window's own content across several frames (~150ms apart) and finds
+    /// the play-area window with the highest per-pixel brightness range over the whole sample —
+    /// self-locating, no node IDs or hardcoded offsets needed (see <see cref="ScreenTileMatcher"/>).
+    /// Uses <c>PrintWindow</c> (via the game's own hwnd) rather than a raw screen-coordinate
+    /// grab, so it isn't corrupted by whatever else is on top of the game on screen — live-caught
+    /// a bad match caused by exactly that (a browser window overlapping the game, 2026-09-08).
+    /// A first version used only 2 frames; live testing caught it occasionally locking onto a
+    /// tile neighboring the real one. Sampling more frames and using range-over-all-frames
+    /// (rather than a single pairwise diff) is meant to fix that — see docs/addon-capture-log.md
+    /// for the synthetic test that validated it before this touched the live game again. Blocks
+    /// Pulse() for ~600ms, but only once per newly-seen prompt (gated by the caller's
+    /// `justAppeared` check), same tradeoff already accepted elsewhere (e.g. the 3.5s hand-result
+    /// stability wait).
     /// </summary>
     private (string Name, double Score)? TryIdentifyGlowingTile(AtkAddonControl window)
     {
         if (_tileMatcher is null)
             return null;
+        var playFrames = new List<Bitmap>();
+        Bitmap? firstFullFrame = null;
+        Bitmap? lastFullFrame = null;
         try
         {
             if (window.Bounds is not { Width: > 0, Height: > 0 } boundsF)
                 return null;
             var screenBounds = Rectangle.Round(boundsF);
-
             IntPtr hwnd = EmjAddonReader.GetGameWindowHandle();
-            using var clientA = ScreenTileMatcher.CaptureWindowClient(hwnd, out Point origin);
-            if (clientA is null)
-                return null;
-            var addonInClient = new Rectangle(screenBounds.X - origin.X, screenBounds.Y - origin.Y, screenBounds.Width, screenBounds.Height);
-            if (addonInClient.X < 0 || addonInClient.Y < 0
-                || addonInClient.Right > clientA.Width || addonInClient.Bottom > clientA.Height)
-                return null; // addon reports being outside the captured client area — stale bounds, don't trust the crop
 
-            using var regionA = clientA.Clone(addonInClient, clientA.PixelFormat);
-            Thread.Sleep(200);
-            using var clientB = ScreenTileMatcher.CaptureWindowClient(hwnd, out _);
-            if (clientB is null)
-                return null;
-            using var regionB = clientB.Clone(addonInClient, clientB.PixelFormat);
+            Rectangle addonInClient = default;
+            Rectangle playArea = default;
+            for (int i = 0; i < ScreenMatchFrameCount; i++)
+            {
+                if (i > 0)
+                    Thread.Sleep(ScreenMatchFrameDelay);
 
-            // Restrict the search to the play area (discard piles/compass), excluding the
-            // player-portrait strips on the left/right — live-caught 2026-09-08 (via the debug
-            // marker below) that a portrait's own idle animation changes far more between frames
-            // than the actual tile pulse, so an unrestricted search reliably lands on a portrait
-            // instead. Percentages tuned against the same 1008x560 capture that showed the
-            // compass area roughly centered, ~58% of width / ~80% of height, starting ~15% in.
-            var playArea = new Rectangle(
-                (int)(addonInClient.Width * 0.15),
-                0,
-                (int)(addonInClient.Width * 0.58),
-                (int)(addonInClient.Height * 0.80));
-            using var playA = regionA.Clone(playArea, regionA.PixelFormat);
-            using var playB = regionB.Clone(playArea, regionB.PixelFormat);
+                using var client = ScreenTileMatcher.CaptureWindowClient(hwnd, out Point origin);
+                if (client is null)
+                    return null;
+
+                if (i == 0)
+                {
+                    addonInClient = new Rectangle(screenBounds.X - origin.X, screenBounds.Y - origin.Y, screenBounds.Width, screenBounds.Height);
+                    if (addonInClient.X < 0 || addonInClient.Y < 0
+                        || addonInClient.Right > client.Width || addonInClient.Bottom > client.Height)
+                        return null; // addon reports being outside the captured client area — stale bounds, don't trust the crop
+
+                    // Restrict the search to the play area (discard piles/compass), excluding the
+                    // player-portrait strips on the left/right — live-caught 2026-09-08 (via the
+                    // debug marker below) that a portrait's own idle animation changes far more
+                    // between frames than the actual tile pulse, so an unrestricted search
+                    // reliably lands on a portrait instead. Percentages tuned against the same
+                    // 1008x560 capture that showed the compass area roughly centered, ~58% of
+                    // width / ~80% of height, starting ~15% in.
+                    playArea = new Rectangle(
+                        (int)(addonInClient.Width * 0.15),
+                        0,
+                        (int)(addonInClient.Width * 0.58),
+                        (int)(addonInClient.Height * 0.80));
+                }
+
+                using var full = client.Clone(addonInClient, client.PixelFormat);
+                if (i == 0)
+                    firstFullFrame = new Bitmap(full);
+                if (i == ScreenMatchFrameCount - 1)
+                    lastFullFrame = new Bitmap(full);
+                playFrames.Add(full.Clone(playArea, full.PixelFormat));
+            }
 
             int windowWidth = Math.Max(20, playArea.Width / 12);
             int windowHeight = Math.Max(20, playArea.Height / 8);
-            var tileRegion = ScreenTileMatcher.FindMostChangedRegion(playA, playB, windowWidth, windowHeight);
+            var tileRegion = ScreenTileMatcher.FindMostVariableRegion(playFrames, windowWidth, windowHeight);
             if (tileRegion is not { } region)
                 return null;
 
-            using var crop = playB.Clone(region, playB.PixelFormat);
+            using var crop = playFrames[^1].Clone(region, playFrames[^1].PixelFormat);
             var result = _tileMatcher.MatchTile(crop);
             var regionInFullPanel = new Rectangle(playArea.X + region.X, playArea.Y + region.Y, region.Width, region.Height);
 
@@ -415,26 +437,29 @@ public sealed class FFXIVMahjongBot : BotBase
             // has already been essential for debugging (caught the oversized-region bug and the
             // portrait-animation bug this way 2026-09-08) without needing a separate manual
             // console snippet. The marked copy draws the chosen window (offset back into full-
-            // panel coordinates) directly on the full panel for an at-a-glance sanity check.
+            // panel coordinates) directly on the last full frame for an at-a-glance sanity check.
             try
             {
                 Directory.CreateDirectory(DebugCaptureDirectory);
-                regionA.Save(Path.Combine(DebugCaptureDirectory, "auto_regionA.png"));
-                regionB.Save(Path.Combine(DebugCaptureDirectory, "auto_regionB.png"));
+                firstFullFrame?.Save(Path.Combine(DebugCaptureDirectory, "auto_regionA.png"));
+                lastFullFrame?.Save(Path.Combine(DebugCaptureDirectory, "auto_regionB.png"));
                 crop.Save(Path.Combine(DebugCaptureDirectory, "auto_crop.png"));
-                using var marked = new Bitmap(regionB);
-                using (var mg = Graphics.FromImage(marked))
+                if (lastFullFrame is not null)
                 {
-                    using var playAreaPen = new Pen(Color.Yellow, 1);
-                    mg.DrawRectangle(playAreaPen, playArea);
-                    using var pen = new Pen(Color.Red, 2);
-                    mg.DrawRectangle(pen, regionInFullPanel);
+                    using var marked = new Bitmap(lastFullFrame);
+                    using (var mg = Graphics.FromImage(marked))
+                    {
+                        using var playAreaPen = new Pen(Color.Yellow, 1);
+                        mg.DrawRectangle(playAreaPen, playArea);
+                        using var pen = new Pen(Color.Red, 2);
+                        mg.DrawRectangle(pen, regionInFullPanel);
+                    }
+                    marked.Save(Path.Combine(DebugCaptureDirectory, "auto_regionB_marked.png"));
                 }
-                marked.Save(Path.Combine(DebugCaptureDirectory, "auto_regionB_marked.png"));
             }
             catch { /* best-effort diagnostic only */ }
 
-            Logging.Write($"[FFXIVMahjong] screen-match region: {regionInFullPanel} (window {windowWidth}x{windowHeight}, guess={result.Name} score={result.Score:F1})");
+            Logging.Write($"[FFXIVMahjong] screen-match region: {regionInFullPanel} (window {windowWidth}x{windowHeight}, frames={playFrames.Count}, guess={result.Name} score={result.Score:F1})");
             return result;
         }
         catch (Exception ex)
@@ -444,6 +469,13 @@ public sealed class FFXIVMahjongBot : BotBase
             // Pulse(), same as DumpAgentEmjRawMemorySnapshot's existing try/catch.
             Logging.Write($"[FFXIVMahjong] screen-match capture failed: {ex.Message}");
             return null;
+        }
+        finally
+        {
+            foreach (var f in playFrames)
+                f.Dispose();
+            firstFullFrame?.Dispose();
+            lastFullFrame?.Dispose();
         }
     }
 

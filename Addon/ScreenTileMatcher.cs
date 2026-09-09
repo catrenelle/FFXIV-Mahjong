@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace FFXIVMahjong.Addon;
@@ -161,6 +162,66 @@ public sealed class ScreenTileMatcher
                 Color pb = b.GetPixel(x, y);
                 int diff = Math.Abs(pa.R - pb.R) + Math.Abs(pa.G - pb.G) + Math.Abs(pa.B - pb.B);
                 sat[y + 1, x + 1] = diff + sat[y, x + 1] + sat[y + 1, x] - sat[y, x];
+            }
+        }
+
+        long WindowSum(int x0, int y0, int x1, int y1) =>
+            sat[y1, x1] - sat[y0, x1] - sat[y1, x0] + sat[y0, x0];
+
+        long bestSum = -1;
+        int bestX = 0, bestY = 0;
+        for (int y = 0; y <= h - windowHeight; y++)
+        {
+            for (int x = 0; x <= w - windowWidth; x++)
+            {
+                long sum = WindowSum(x, y, x + windowWidth, y + windowHeight);
+                if (sum <= bestSum)
+                    continue;
+                bestSum = sum;
+                bestX = x;
+                bestY = y;
+            }
+        }
+        return bestSum <= 0 ? null : new Rectangle(bestX, bestY, windowWidth, windowHeight);
+    }
+
+    /// <summary>
+    /// Finds the window with the highest total per-pixel brightness <i>range</i> (max-min of R+G+B
+    /// across every sampled frame, not just one pair) — more robust than a single 2-frame diff
+    /// against occasional wrong-neighbor lock-on (live-observed 2026-09-08). A first attempt at
+    /// fixing this used pairwise-consecutive-frame "voting", but a synthetic test caught a real
+    /// flaw in that design: a gradually-ramping real pulse loses to a single sharp one-off glitch,
+    /// since voting only counts how many *pairs* show a strong jump, not the total signal over
+    /// the whole window. Range-over-all-frames doesn't have that timing-alignment problem — a
+    /// genuinely animating tile stays high-range across the whole sample regardless of exactly
+    /// when in the capture window its brightness swings, while a one-off artifact only shows up
+    /// in the one or two frames it actually occurred in and contributes far less total range.
+    /// </summary>
+    public static Rectangle? FindMostVariableRegion(IReadOnlyList<Bitmap> frames, int windowWidth, int windowHeight)
+    {
+        if (frames.Count < 2)
+            return null;
+        int w = frames[0].Width, h = frames[0].Height;
+        foreach (var f in frames)
+            if (f.Width != w || f.Height != h)
+                return null;
+        if (windowWidth <= 0 || windowHeight <= 0 || windowWidth > w || windowHeight > h)
+            return null;
+
+        var sat = new long[h + 1, w + 1];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                int min = int.MaxValue, max = int.MinValue;
+                foreach (var f in frames)
+                {
+                    Color c = f.GetPixel(x, y);
+                    int sum = c.R + c.G + c.B;
+                    if (sum < min) min = sum;
+                    if (sum > max) max = sum;
+                }
+                sat[y + 1, x + 1] = (max - min) + sat[y, x + 1] + sat[y + 1, x] - sat[y, x];
             }
         }
 
