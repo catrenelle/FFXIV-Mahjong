@@ -391,6 +391,57 @@ absolute score alone isn't yet a reliable "trust this" signal). Good stopping po
 — next session should focus on repeat-and-average sampling and score calibration, not further
 region-location debugging.
 
+## Screen-match tile identification: region-finding solved, matching needed a real pivot (2026-09-08, later same session)
+
+Continued past the "confirmed correct once, jittery" state above. Region-finding got fully
+solved through a sequence of validated fixes: sampling 5 frames instead of 2 and using
+per-pixel brightness *range* across all of them (`FindMostVariableRegion`) instead of a single
+pairwise diff (a first attempt using pairwise-consecutive-frame "voting" had a real flaw caught
+by a synthetic test — a gradual real pulse loses to one sharp glitch); excluding the central
+wall-count/turn indicator, which the user caught also has its own idle animation (a second
+legitimate competing signal, distinct from the portrait animation fixed earlier); and window
+size tuned from **directly measuring real captured pixel data** (an ASCII color-map of an
+actual crop) rather than visual estimates — this alone dropped a real failing match's score
+from 235 to 194. End state: region-finding lands *exactly* on the real glowing tile,
+confirmed repeatedly against user ground truth.
+
+**But matching still failed even with a perfect crop.** Ranked all 32 references against the
+real failing crop — the correct answer (`north`) placed **dead last**, 32nd of 33, not just
+"close but wrong." Systematically ruled out causes before finding the real one:
+- Reference PNG alpha transparency (real, confirmed via pixel inspection) — flattening onto an
+  opaque background barely moved the score. Not the main cause.
+- Wrong rotation angle — a fine-grained 5°-step search only improved 239→235. Not the main
+  cause.
+- Shear (in addition to rotation) — tested a rotation×shear grid search offline; best found
+  was still worse than the winning wrong answer. Not sufficient either.
+
+**Root cause: genuine 3D perspective distortion**, confirmed visually (a zoomed side-by-side
+comparison showed the live tile is visibly trapezoidal — narrower at top than bottom) — the
+table is rendered in 3D, so a side-positioned discard pile doesn't just rotate the tile, it
+warps it. No amount of rotation or simple shear correction closed this gap.
+
+**Pivot, validated offline before deploying**: instead of correcting live captures to match
+flat reference art, capture reference art *from the same position* so it already has the same
+warp baked in. Tested first: a real captured tile compared against another real capture of
+itself (via resize/resample to simulate frame-to-frame noise) scored ~17, versus ~132 against
+the flat reference — an 8x difference. Seeded `Assets/TileReference/north_shimocha.png` with
+today's confirmed capture (North Wind, appearing in the "shimocha" relative-seat position).
+`ScreenTileMatcher.MatchTile` now strips a recognized `_kamicha`/`_toimen`/`_shimocha` suffix
+from whichever reference wins, so callers see the plain tile identity regardless of which
+variant (flat or position-specific) matched. Confirmed offline: the exact real crop that
+previously matched wrong (`9p`, then `2s`) now matches `north` at score 0.0 against this seed.
+
+**This is a library to grow incrementally, not a one-shot fix.** Only `north` at the
+`shimocha` position is covered so far — up to 34 tiles × 3 relative positions (kamicha/toimen/
+shimocha; self's own hand isn't relevant here) = 102 possible entries for full coverage, though
+partial coverage (common tiles first) is still useful as it accumulates. Each future confirmed
+live capture (user states the ground-truth tile, same discipline as tonight) can be dropped
+into `Assets/TileReference/{tile}_{position}.png` directly — no code changes needed, `MatchTile`
+already searches every file in the directory. Next session: confirm this generalizes (does the
+seeded reference help identify a *different* North Wind capture at the same position, not just
+match itself — genuinely untested yet since we only ever had the one still-open prompt tonight)
+and start adding more positions/tiles as they come up naturally during play.
+
 ## Next-button dispatch downgraded: reproduces the reference project's "stuck state 32" (2026-09-08)
 
 Live-hit the exact failure the reference project documented for the identical mechanism: our
