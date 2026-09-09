@@ -243,10 +243,52 @@ AtkValues is not where this field lives, confirmed rather than assumed.
 
 Extended the same diffing to a full 0x3000-byte raw-memory snapshot of the addon's own struct
 (`DumpRawMemorySnapshot`/`LogRawMemoryDiff`), taken at the same transition point, since the field
-must live outside the AtkValues array if it's published at all. Not yet run against a real
-capture — next call prompt's log output will include a `raw diff` section alongside the `atk
-diff` one, and any changed offset that plausibly decodes as a tile id gets auto-annotated so it
-doesn't need manual arithmetic to spot.
+must live outside the AtkValues array if it's published at all.
+
+**Raw addon struct memory also ruled out (2026-09-08, three more real Chi captures: 7m, 9p, 6m,
+all North→self kamicha).** Every capture showed the identical tiny set of changed offsets —
+`+0x00F8`/`+0x00FC` (some unrelated counter/pointer pair, same both times), `+0x0D9C` (matches
+the reference project's kamicha-discard-count-byte pattern — see the seat-block note below, not
+tile data), and `+0x12E8..+0x12F4`. That last one looked promising once (`+0x12F4` decoded as
+"bare tile id 3 = 4m") but **the same offset read exactly `3` on both the 7m and the 6m capture**
+— a constant, not tracking the actual offered tile at all. Nothing in the full 3072-int scan ever
+matched the real tile (76047/6 for 7m, 76058/17 for 9p, 76046/5 for 6m) in either encoding.
+
+**AgentEmj (RB's native `AgentModule.GetAgentInterfaceById(5)`, matching the reference project's
+own `AgentId=5`) also ruled out.** Resolved successfully (a valid pointer, confirmed via a
+one-time startup log), but its full 2048-int/8KB snapshot showed **zero byte changes** across two
+real call-prompt transitions, while the AtkValues diff captured a real, correct transition at the
+exact same moment. A live, per-hand-relevant structure should show *something* changing when a
+major state transition happens; zero changes strongly suggests `AgentId=5` is either the wrong
+agent for our client or isn't the one backing per-hand mahjong state at all — not a useful lead.
+
+**Delayed (+1.5s) diff also empty across all three sources**, ruling out an asynchronous/delayed
+write (e.g. a network round-trip) as the explanation for not finding it in the instant-of-
+appearance diff.
+
+**Conclusion: this field is not reachable through passive memory polling** — not AtkValues, not
+the addon's own struct memory, not the AgentEmj backing structure, immediate or delayed. Three
+sources × two time points × six real distinct-tile captures (5m/2m-guess, Green Dragon/Pon, 9m,
+7p, 9p, 7m, 6m), all methodologically sound (before/after diffs, not single-snapshot guessing),
+all negative. What's left are two fundamentally different techniques, both bigger undertakings
+than anything built so far:
+1. **Real-time native call/event hooking** — intercept the actual game function that populates
+   the popup, rather than reading its aftermath from memory. Flagged as a possibility since the
+   project's very first RE session; now the most likely remaining path.
+2. **UI node-tree reading instead of flat memory** — the visually "glowing" tile might be purely
+   a rendering property (icon/texture reference) on a child node of the discard pile itself,
+   never copied into a separate scalar field anywhere. Would need `GetNodeById`/component-tree
+   walking (the same capability the `ReceiveEvent`-based Next-button fix also needs — see below),
+   reading the highlighted node's icon id directly rather than scanning for an int.
+
+Both need new capability-building, not more guessing at existing offsets — good stopping point
+for this specific hunt. Discard automation (including post-call hands) is unaffected either way.
+
+**Side-finding kept for later**: `+0x0D9C`'s changes line up almost exactly with the reference
+project's kamicha-discard-count-byte offset (`0x0D9E`, 2 bytes off — consistent with reading a
+1-byte counter inside a 4-byte-aligned window), and matches the `-2 from score` pattern already
+confirmed on our own `KamichaScore=0x0DA0`. Not the tile field, but a real, well-grounded offset
+worth keeping for future opponent-seat meld-inference work.
 
 ## Next-button dispatch downgraded: reproduces the reference project's "stuck state 32" (2026-09-08)
 
