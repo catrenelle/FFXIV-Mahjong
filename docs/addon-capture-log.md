@@ -681,3 +681,13 @@ either way) while giving up the closed-hand's riichi/menzen-tsumo potential. A c
 heuristic correctly declining a call the user made anyway — worth knowing "pass" was actually the
 efficiency-optimal play here. Seeded `3p_kamicha.png` — kamicha now covers 8 tiles (7p, 9s, 3m,
 1p, 4p, 8m, 6p, 3p).
+
+## Ninth kamicha tile (2m) — the previous 3p Chi was passed on, as recommended (2026-09-08 later)
+
+Hand unchanged from the previous entry (10 concealed/1 meld) — confirms the user passed on the
+3p Chi, matching the engine's PASS recommendation there. North/kamicha discarded 2m, calling Chi
+with 3m+4m; screen-match guessed 8m (score 90.2, no 2m-kamicha reference existed). Checked via
+`.scratch/CallPolicyCheck`: fed 8m → PASS (matches live log); fed the real 2m → `ShouldCallChi`
+returns **3m+4m**, matching the user's actual call — and this one genuinely improves the hand
+(unlike the 3p case). Seeded `2m_kamicha.png` — kamicha now covers 9 tiles (7p, 9s, 3m, 1p, 4p,
+8m, 6p, 3p, 2m).
