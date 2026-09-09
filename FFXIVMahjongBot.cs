@@ -101,6 +101,10 @@ public sealed class FFXIVMahjongBot : BotBase
     /// <summary>Same idea as <see cref="_lastNormalAtkSnapshot"/> but for the addon's raw struct memory — covers fields that never go through AtkValues at all (confirmed live 2026-09-08: a Chi's offered tile changed nothing in a 109-entry AtkValues diff, so it must live here instead).</summary>
     private int[]? _lastNormalRawSnapshot;
 
+    /// <summary>Same idea again, but for the separate "AgentEmj"-equivalent backing structure (via <see cref="EmjAddonReader.DumpAgentEmjRawMemorySnapshot"/>) rather than the UI addon's own memory — tried after both AtkValues and the addon's raw struct memory came up completely clean on real diffs (2026-09-08).</summary>
+    private int[]? _lastNormalAgentSnapshot;
+    private bool _agentResolutionLogged;
+
     /// <summary>Snapshot taken the instant state 29 (hand-result screen) first appears, so we can diff it against the snapshot right as <see cref="HandResultStabilityWindow"/> elapses — hunting for whatever flag flips when the Next button visibly becomes clickable (user-observed 2026-09-08).</summary>
     private EmjAddonReader.AtkValueSnapshot[]? _handResultFirstSeenSnapshot;
     private bool _handResultReadyDiffLogged;
@@ -124,6 +128,7 @@ public sealed class FFXIVMahjongBot : BotBase
         _lastDispatchAt = DateTime.MinValue;
         _lastNormalAtkSnapshot = null;
         _lastNormalRawSnapshot = null;
+        _lastNormalAgentSnapshot = null;
         _handResultFirstSeenSnapshot = null;
         _handResultReadyDiffLogged = false;
     }
@@ -152,7 +157,13 @@ public sealed class FFXIVMahjongBot : BotBase
             if (justAppeared && _lastNormalRawSnapshot is { } rawBefore)
             {
                 var rawAfter = _reader.DumpRawMemorySnapshot(window);
-                LogRawMemoryDiff("call-prompt appeared", rawBefore, rawAfter);
+                LogRawMemoryDiff("call-prompt appeared (addon)", rawBefore, rawAfter);
+            }
+            if (justAppeared && _lastNormalAgentSnapshot is { } agentBefore)
+            {
+                var agentAfter = _reader.DumpAgentEmjRawMemorySnapshot();
+                if (agentAfter is not null)
+                    LogRawMemoryDiff("call-prompt appeared (AgentEmj)", agentBefore, agentAfter);
             }
 
             if (DateTime.UtcNow - firstSeen < CallPromptBlockTimeout)
@@ -175,6 +186,14 @@ public sealed class FFXIVMahjongBot : BotBase
             _callPromptFirstSeenAt = null;
             _lastNormalAtkSnapshot = _reader.DumpAtkValueSnapshot(window);
             _lastNormalRawSnapshot = _reader.DumpRawMemorySnapshot(window);
+            _lastNormalAgentSnapshot = _reader.DumpAgentEmjRawMemorySnapshot();
+            if (!_agentResolutionLogged)
+            {
+                _agentResolutionLogged = true;
+                Logging.Write(_lastNormalAgentSnapshot is null
+                    ? "[FFXIVMahjong] AgentEmj (id=5) did not resolve — hypothesis may be wrong for this client"
+                    : "[FFXIVMahjong] AgentEmj (id=5) resolved successfully, will diff it at the next call prompt");
+            }
         }
 
         int stateCode = _reader.ReadStateCode(window);
