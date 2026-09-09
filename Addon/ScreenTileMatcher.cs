@@ -256,19 +256,41 @@ public sealed class ScreenTileMatcher
         return bestSum <= 0 ? null : new Rectangle(bestX, bestY, windowWidth, windowHeight);
     }
 
-    /// <summary>Best-guess tile name for a cropped region, scored by mean per-pixel RGB difference against every reference (resized to match) — lower score is a better match.</summary>
+    private static readonly RotateFlipType[] Rotations =
+    [
+        RotateFlipType.RotateNoneFlipNone,
+        RotateFlipType.Rotate90FlipNone,
+        RotateFlipType.Rotate180FlipNone,
+        RotateFlipType.Rotate270FlipNone,
+    ];
+
+    /// <summary>
+    /// Best-guess tile name for a cropped region, scored by mean per-pixel RGB difference
+    /// against every reference (resized to match) — lower score is a better match. Tries the
+    /// crop at all 4 rotations, not just as-captured: discard piles are rotated to face each
+    /// seat around the table (a tile in the East pile renders sideways relative to our upright
+    /// reference art), which a raw pixel comparison would score badly even against a perfect
+    /// crop — user-caught 2026-09-08, missed in the original design.
+    /// </summary>
     public (string Name, double Score) MatchTile(Bitmap crop)
     {
         string bestName = "(none)";
         double bestScore = double.MaxValue;
-        foreach (var (name, reference) in _references)
+        foreach (var rotation in Rotations)
         {
-            using var resized = new Bitmap(crop, reference.Size);
-            double score = MeanPixelDifference(resized, reference);
-            if (score >= bestScore)
-                continue;
-            bestScore = score;
-            bestName = name;
+            using var rotated = new Bitmap(crop);
+            if (rotation != RotateFlipType.RotateNoneFlipNone)
+                rotated.RotateFlip(rotation);
+
+            foreach (var (name, reference) in _references)
+            {
+                using var resized = new Bitmap(rotated, reference.Size);
+                double score = MeanPixelDifference(resized, reference);
+                if (score >= bestScore)
+                    continue;
+                bestScore = score;
+                bestName = name;
+            }
         }
         return (bestName, bestScore);
     }

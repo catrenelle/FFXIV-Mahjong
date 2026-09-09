@@ -423,8 +423,16 @@ public sealed class FFXIVMahjongBot : BotBase
                 playFrames.Add(full.Clone(playArea, full.PixelFormat));
             }
 
-            int windowWidth = Math.Max(20, playArea.Width / 12);
+            // Aspect ratio matters here, not just rough scale — our reference tiles are ~0.7-0.73
+            // width/height (taller than wide, e.g. north.png is 32x44). A first version derived
+            // width and height independently (playArea.Width/12, playArea.Height/8), which came
+            // out squarer (~0.86) than any real tile; MatchTile resizes the crop to fit each
+            // reference's exact dimensions, so a wrong-shaped crop gets stretched/squished before
+            // comparison, distorting the character and hurting the match even when the *location*
+            // is correct (live-caught 2026-09-08: region landed exactly on the real glowing North
+            // Wind tile, but still matched as "9m").
             int windowHeight = Math.Max(20, playArea.Height / 8);
+            int windowWidth = Math.Max(16, (int)(windowHeight * 0.72));
 
             // The central wall-count/turn indicator (the "61" diamond, its 4 dots, and the star)
             // has its own idle animation too — user-caught 2026-09-08 via side-by-side crops.
@@ -438,8 +446,29 @@ public sealed class FFXIVMahjongBot : BotBase
             if (tileRegion is not { } region)
                 return null;
 
-            using var crop = playFrames[^1].Clone(region, playFrames[^1].PixelFormat);
-            var result = _tileMatcher.MatchTile(crop);
+            // Match against every sampled frame's crop at this position, not just the last one,
+            // and keep the best-scoring result — the tile is actively pulsing/glowing, so
+            // whichever single frame we grabbed could be caught at a brightness extreme that
+            // doesn't resemble the flat, non-glowing reference art. Trying all 5 "exposures"
+            // hedges against picking an unlucky one.
+            Bitmap? bestCrop = null;
+            (string Name, double Score) result = ("(none)", double.MaxValue);
+            foreach (var frame in playFrames)
+            {
+                var candidateCrop = frame.Clone(region, frame.PixelFormat);
+                var candidateResult = _tileMatcher.MatchTile(candidateCrop);
+                if (candidateResult.Score < result.Score)
+                {
+                    bestCrop?.Dispose();
+                    bestCrop = candidateCrop;
+                    result = candidateResult;
+                }
+                else
+                {
+                    candidateCrop.Dispose();
+                }
+            }
+            using var crop = bestCrop ?? playFrames[^1].Clone(region, playFrames[^1].PixelFormat);
             var regionInFullPanel = new Rectangle(playArea.X + region.X, playArea.Y + region.Y, region.Width, region.Height);
 
             // Always dump the last detection for inspection — cheap, overwrites each time, and
