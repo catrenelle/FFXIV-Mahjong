@@ -646,3 +646,13 @@ Not fixed yet — one data point isn't enough to safely retune the 15% play-area
 could just shift the same edge-effect problem elsewhere without evidence). Worth revisiting if
 this recurs: either widen the left margin a few more percent, or reject any detected region that
 lands within a few pixels of the play area's own boundary before trusting it.
+
+## Sixth kamicha tile (8m) — valid re-poll of the same prompt (2026-09-08 later)
+
+The same 8m/Pon prompt got re-polled a few seconds later, this time landing a valid crop (region
+302,336 — solidly inside the established kamicha cluster, not the portrait-edge false positive
+from the previous poll). Screen-match guessed 3m (score 85.1, no 8m-kamicha reference existed
+yet). Confirmed via `.scratch/CallPolicyCheck`: fed 3m → `CHI (2m+4m)`, matching the live log
+exactly; fed the real 8m → `ShouldCallPon: true`, same missed call as before, now correctly
+attributed to a coverage gap rather than a bad crop. Seeded `8m_kamicha.png` — kamicha now covers
+6 tiles (7p, 9s, 3m, 1p, 4p, 8m).
