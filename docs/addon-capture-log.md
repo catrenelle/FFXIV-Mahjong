@@ -345,6 +345,52 @@ no collection-expression-to-interface, etc.). Whether it resolves `Bitmap`/`Grap
 way is unconfirmed until the next restart — first signal will be whether the bot compiles at
 all, before we even get to whether the screen-match itself works.
 
+**Live testing, three real bugs found and fixed in sequence, then a confirmed correct match
+(2026-09-08, same session).** `System.Drawing.Common` compiled fine under RB's own compiler —
+that risk was unfounded. Three real, distinct bugs found via live testing, each root-caused
+before attempting a fix rather than guessing:
+
+1. **Browser occlusion.** First live attempt (`guess=north score=343.4`, actually correct by
+   coincidence — see below) was captured with a browser window overlapping the game.
+   `Graphics.CopyFromScreen` grabs whatever's visually on top at those screen coordinates, not
+   the game's actual content. Fixed by switching to `PrintWindow` via the game's own hwnd
+   (`ff14bot.Core.Memory.Process.MainWindowHandle`, found via RB reflection) — renders the
+   window's content directly regardless of what else is on screen. Matters for a bot meant to
+   run while the user alt-tabs away, not just for testing.
+2. **Whole-panel capture.** With occlusion fixed, `live_crop.png` showed the "region" was nearly
+   the *entire* addon panel (880x501 of a 1008x560 capture), not a tile — `PrintWindow`
+   introduces low-level rendering noise spread across the whole frame between two captures, and
+   a naive bounding-box-of-all-changed-pixels approach includes all of it. Fixed with
+   `FindMostChangedRegion`: slides a tile-proportional window across a summed-area table of
+   pixel differences and picks the window with the highest *concentration* of change, not the
+   full extent of any change. Validated offline against a synthetic reproduction of the exact
+   failure (ambient noise everywhere + one real localized patch) before the next live test:
+   naive bbox grabbed the whole synthetic frame, densest-window found the real patch exactly.
+3. **Portrait animation.** Region size was now correct, but two live attempts landed on
+   different, definitely-wrong tiles (`green`/`7p`, then `green`/`9m`-ish). Added a debug
+   marker (draws the chosen window directly on the full panel capture) — it showed the region
+   landing squarely on the Moogle player portrait. FFXIV player portraits have their own idle
+   animation (subtle bust movement) that changes far more between frames than any tile's glow,
+   so an unrestricted search reliably prefers a portrait over the real target. Fixed by
+   restricting the search to a play-area sub-rectangle (~58% width/~80% height, centered,
+   excluding the portrait strips) before running `FindMostChangedRegion`.
+
+**After all three fixes: correct match, confirmed against ground truth.** Live capture (East
+discarded North Wind, Pon prompt) — `region={X=645,Y=188,Width=48,Height=56} guess=north
+score=320.7`, marker showed the box sitting directly on a tile visibly reading 北, and the user
+confirmed that's the actual tile that was glowing. A second attempt 0.9s later (same
+still-open prompt) drifted onto a neighboring tile and guessed wrong (`9m`) — so this isn't
+fully reliable yet, but the fundamental mechanism (self-locating via pulse-diff, then template
+match) is now proven to work end-to-end at least once. Remaining work before this could drive
+real accept/pass dispatch: consistency across repeated attempts on the same prompt (the jitter
+suggests either the window size still isn't quite tile-sized, or the diff needs averaging over
+more than 2 frames), and a proper confidence-threshold calibration (scores are consistently in
+the 150-340 range even for correct matches, far from the near-0 baseline from clean reference-
+vs-reference comparisons — live rendering differs enough from the flat Lodestone art that
+absolute score alone isn't yet a reliable "trust this" signal). Good stopping point for tonight
+— next session should focus on repeat-and-average sampling and score calibration, not further
+region-location debugging.
+
 ## Next-button dispatch downgraded: reproduces the reference project's "stuck state 32" (2026-09-08)
 
 Live-hit the exact failure the reference project documented for the identical mechanism: our
