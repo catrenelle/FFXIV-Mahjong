@@ -142,37 +142,32 @@ public sealed class EmjAddonReader
     public int[] DumpRawMemorySnapshot(AtkAddonControl window) =>
         RBCore.Memory.ReadArray<int>(window.Pointer, RawMemorySnapshotSize / 4);
 
-    /// <summary>
-    /// Internal RB "Agent" id for the Doman Mahjong backing structure — distinct from the "Emj"
-    /// UI addon's own <c>AtkUnitBase</c> memory. Matches the reference project's own AgentId=5
-    /// for the same client feature (their <c>AgentModule.GetAgentByInternalId((AgentId)5)</c>).
-    /// Base-game agent ids are typically stable across client builds/regions since they're part
-    /// of the core client rather than addon-specific, but this hasn't been independently
-    /// confirmed for our client — <see cref="DumpAgentEmjRawMemorySnapshot"/> returns null if it
-    /// doesn't resolve, so a wrong id fails safe instead of reading garbage.
-    /// </summary>
-    private const int EmjAgentId = 5;
-
     private const int AgentMemorySnapshotSize = 0x2000;
 
     /// <summary>
-    /// Raw int32s from the "AgentEmj"-equivalent backing structure via RB's own
-    /// <see cref="AgentModule.GetAgentInterfaceById"/>, rather than the UI addon's own memory —
-    /// worth checking since a real diff ruled out both AtkValues and the addon's own struct
-    /// memory for the offered-tile field (confirmed live 2026-09-08, see docs/addon-capture-log.md).
+    /// Raw int32s from the addon's actually-bound backing "Agent" structure, via RB's own
+    /// <c>AtkAddonControl.TryFindAgentInterface()</c> — resolves whichever agent is genuinely
+    /// attached to *this* Emj window, rather than guessing an internal id. Supersedes an earlier
+    /// attempt that guessed <c>AgentModule.GetAgentInterfaceById(5)</c> (matching the reference
+    /// project's own AgentId for their client): that guess resolved to *a* valid pointer but
+    /// showed zero byte changes across two real call-prompt transitions while AtkValues clearly
+    /// captured the same transition correctly — strong evidence it was the wrong agent, not
+    /// evidence the approach itself was wrong. Worth checking since a real diff ruled out both
+    /// AtkValues and the addon's own struct memory for the offered-tile field (confirmed live
+    /// 2026-09-08, see docs/addon-capture-log.md).
     /// </summary>
-    public int[]? DumpAgentEmjRawMemorySnapshot()
+    public int[]? DumpAgentEmjRawMemorySnapshot(AtkAddonControl window)
     {
         try
         {
-            var agent = AgentModule.GetAgentInterfaceById(EmjAgentId);
+            var agent = window.TryFindAgentInterface();
             if (agent is not { IsValid: true } || agent.Pointer == IntPtr.Zero)
                 return null;
             return RBCore.Memory.ReadArray<int>(agent.Pointer, AgentMemorySnapshotSize / 4);
         }
         catch
         {
-            return null; // unverified id/API shape — fail safe rather than crash the bot's Pulse loop
+            return null; // fail safe rather than crash the bot's Pulse loop
         }
     }
 }

@@ -101,7 +101,7 @@ public sealed class FFXIVMahjongBot : BotBase
     /// <summary>Same idea as <see cref="_lastNormalAtkSnapshot"/> but for the addon's raw struct memory — covers fields that never go through AtkValues at all (confirmed live 2026-09-08: a Chi's offered tile changed nothing in a 109-entry AtkValues diff, so it must live here instead).</summary>
     private int[]? _lastNormalRawSnapshot;
 
-    /// <summary>Same idea again, but for the separate "AgentEmj"-equivalent backing structure (via <see cref="EmjAddonReader.DumpAgentEmjRawMemorySnapshot"/>) rather than the UI addon's own memory — tried after both AtkValues and the addon's raw struct memory came up completely clean on real diffs (2026-09-08).</summary>
+    /// <summary>Same idea again, but for the addon's actually-bound "Agent" backing structure (via <see cref="EmjAddonReader.DumpAgentEmjRawMemorySnapshot"/>, resolved per-window rather than by a guessed internal id) rather than the UI addon's own memory — tried after both AtkValues and the addon's raw struct memory came up completely clean on real diffs (2026-09-08).</summary>
     private int[]? _lastNormalAgentSnapshot;
     private bool _agentResolutionLogged;
 
@@ -183,7 +183,7 @@ public sealed class FFXIVMahjongBot : BotBase
                 }
                 if (_lastNormalAgentSnapshot is { } agentBefore)
                 {
-                    var agentAfter = _reader.DumpAgentEmjRawMemorySnapshot();
+                    var agentAfter = _reader.DumpAgentEmjRawMemorySnapshot(window);
                     if (agentAfter is not null)
                         LogRawMemoryDiff("call-prompt appeared (AgentEmj)", agentBefore, agentAfter);
                     _callPromptAppearedAgentSnapshot = agentAfter;
@@ -200,7 +200,7 @@ public sealed class FFXIVMahjongBot : BotBase
                     LogRawMemoryDiff("call-prompt +1.5s (addon)", rawBase, _reader.DumpRawMemorySnapshot(window));
                 if (_callPromptAppearedAgentSnapshot is { } agentBase)
                 {
-                    var agentNow = _reader.DumpAgentEmjRawMemorySnapshot();
+                    var agentNow = _reader.DumpAgentEmjRawMemorySnapshot(window);
                     if (agentNow is not null)
                         LogRawMemoryDiff("call-prompt +1.5s (AgentEmj)", agentBase, agentNow);
                 }
@@ -230,13 +230,13 @@ public sealed class FFXIVMahjongBot : BotBase
             _callPromptDelayedDiffLogged = false;
             _lastNormalAtkSnapshot = _reader.DumpAtkValueSnapshot(window);
             _lastNormalRawSnapshot = _reader.DumpRawMemorySnapshot(window);
-            _lastNormalAgentSnapshot = _reader.DumpAgentEmjRawMemorySnapshot();
+            _lastNormalAgentSnapshot = _reader.DumpAgentEmjRawMemorySnapshot(window);
             if (!_agentResolutionLogged)
             {
                 _agentResolutionLogged = true;
                 Logging.Write(_lastNormalAgentSnapshot is null
-                    ? "[FFXIVMahjong] AgentEmj (id=5) did not resolve — hypothesis may be wrong for this client"
-                    : "[FFXIVMahjong] AgentEmj (id=5) resolved successfully, will diff it at the next call prompt");
+                    ? "[FFXIVMahjong] Window-bound AgentEmj did not resolve"
+                    : "[FFXIVMahjong] Window-bound AgentEmj resolved successfully, will diff it at the next call prompt");
             }
         }
 
