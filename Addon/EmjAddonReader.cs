@@ -111,15 +111,22 @@ public sealed class EmjAddonReader
     /// A lightweight per-index snapshot of the AtkValues array, for diffing between two points
     /// in time (e.g. right before vs. right after a call prompt appears) instead of eyeballing
     /// one dump in isolation — see <see cref="FFXIVMahjongBot"/>'s call-prompt diff capture.
+    /// <paramref name="Text"/> is only populated for string-typed entries — <c>TwoInt.Int</c> is
+    /// meaningless packed bytes for those (button-label text was never actually readable before
+    /// this; only its presence/type was, via <c>TwoInt.AsUTF8String</c> discovered 2026-09-08).
     /// </summary>
-    public readonly record struct AtkValueSnapshot(AtkValueType Type, int Int);
+    public readonly record struct AtkValueSnapshot(AtkValueType Type, int Int, string? Text);
 
     public AtkValueSnapshot[] DumpAtkValueSnapshot(AtkAddonControl window)
     {
         var values = ReadAtkValues(window);
         var snapshot = new AtkValueSnapshot[values.Length];
         for (int i = 0; i < values.Length; i++)
-            snapshot[i] = new AtkValueSnapshot(values[i].AtkValueType, values[i].Int);
+        {
+            var v = values[i];
+            bool isString = v.AtkValueType is AtkValueType.String or AtkValueType.String8 or AtkValueType.ManagedString;
+            snapshot[i] = new AtkValueSnapshot(v.AtkValueType, v.Int, isString ? v.AsUTF8String : null);
+        }
         return snapshot;
     }
 

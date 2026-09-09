@@ -327,10 +327,13 @@ public sealed class FFXIVMahjongBot : BotBase
         {
             var b = i < before.Length ? before[i] : default;
             var a = i < after.Length ? after[i] : default;
-            if (b.Type != a.Type || b.Int != a.Int)
-                Logging.Write($"[FFXIVMahjong]   [{i}] {b.Type}:{b.Int} -> {a.Type}:{a.Int}");
+            if (b.Type != a.Type || b.Int != a.Int || b.Text != a.Text)
+                Logging.Write($"[FFXIVMahjong]   [{i}] {Describe(b)} -> {Describe(a)}");
         }
     }
+
+    private static string Describe(EmjAddonReader.AtkValueSnapshot v) =>
+        v.Text is not null ? $"{v.Type}:\"{v.Text}\"" : $"{v.Type}:{v.Int}";
 
     /// <summary>Logs every raw-memory int32 that differs between two snapshots, byte-offset-addressed to line up with EmjOffsets constants. Annotates anything that plausibly decodes as a tile id (bare 0-33, or texture-offset) so a match doesn't need manual arithmetic to spot.</summary>
     private static void LogRawMemoryDiff(string label, int[] before, int[] after)
