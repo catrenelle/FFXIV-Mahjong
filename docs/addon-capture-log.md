@@ -489,6 +489,43 @@ confirm the visible game state actually changed before trusting an opcode —
 a call that "returns" success without moving game state is a real failure
 mode worth checking for explicitly, not just assuming success.
 
+## Dispatch hypotheses from the reference project (2026-09-09, not yet live-tested)
+
+User linked github.com/XeldarAlz/FFXIV-AutoMahjongSolver's `docs/dispatch-protocol.md` (the same
+AGPL Dalamud plugin used as a behavioral hypothesis source elsewhere in this project — read for
+ideas to verify live, not vendored). One direct cross-check landed: their documented discard
+handshake (`[15, raw_tile_id]` then `[7, slot_index]`) is *exactly* our own already-verified
+two-step discard protocol (`EmjActionDispatcher`'s opcode 15 then opcode 7) — same addon, good
+sign their other findings are plausible hypotheses for our client too, not just guesses.
+
+Hypotheses for our unmapped actions (**none implemented yet** — need live capture + AtkValue
+diff to confirm before wiring into `FFXIVMahjongBot.cs`/`EmjActionDispatcher`):
+
+- **Accept a call (Pon/Chi/Kan/Ron/Riichi/Tsumo)**: opcode 11 (our own confirmed Pass opcode)
+  with an option index = button position in the row (Pon, Chi, AnKan, MinKan, ShouMinKan, Ron,
+  Riichi, Tsumo, then Pass last). Consistent with our own confirmed Pass at index 1 on a 2-button
+  "Chi, Pass" row (Pass being last).
+- **Tsumo**: dedicated opcode 9, single AtkValue, no index — their corpus-confirmed opcode.
+- **Ron**: explicitly *not* a dedicated opcode. They shipped a speculative opcode 10 for Ron;
+  it returned `HookFailed` *and* corrupted their game into a stuck DRAW screen with no recovery
+  (their issue #39) — same failure class as our own Next-button stuck-state-32 finding. Fixed by
+  routing Ron through the same opcode-11 button-row as Pon/Chi, at Ron's position in the row.
+- **AnKan/ShouMinKan** (self-declared kan): same lesson — a speculative opcode 12 was removed;
+  both route through opcode-11 button-row at the self-declare popup instead.
+- **Riichi**: accept via opcode-11 button-row (a dead opcode 8 was tried and abandoned first);
+  decline falls through to the normal discard handshake rather than a Pass click.
+- **Chi variant sub-popup**: when multiple Chi shapes are legal, a second popup opens after the
+  initial Chi button click to choose among them — separate dispatch step, untested even on their
+  side (`[11, 0]` for the first variant, unverified for non-default choices).
+
+Given their own history of speculative opcodes bricking the game (Ron opcode 10, kan opcode 12,
+riichi opcode 8 — three separate incidents), treat every one of these as a hypothesis to verify
+with a real AtkValue diff before trusting, same discipline as the rest of this log. Next live
+session's most valuable targets, in order of how often they're likely to come up: Pon/Chi/Kan
+accept via opcode 11 (extends what we already know works for Pass), then Tsumo (opcode 9, clean
+dedicated path), then Ron and Riichi last (highest bricking risk per their history, want the
+other patterns validated first).
+
 ## Call-recommendation meld-count bug found and fixed (2026-09-08 later)
 
 The log-only Pon/Chi recommendation (added in `1e5bc66`) fed `_reader.ReadSelfHand(window)`
