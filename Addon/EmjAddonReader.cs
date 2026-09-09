@@ -106,4 +106,20 @@ public sealed class EmjAddonReader
         nint ptr = RBCore.Memory.Read<nint>(window.Pointer + EmjOffsets.AtkValuesPointer);
         return RBCore.Memory.ReadArray<TwoInt>(ptr, count);
     }
+
+    /// <summary>
+    /// A lightweight per-index snapshot of the AtkValues array, for diffing between two points
+    /// in time (e.g. right before vs. right after a call prompt appears) instead of eyeballing
+    /// one dump in isolation — see <see cref="FFXIVMahjongBot"/>'s call-prompt diff capture.
+    /// </summary>
+    public readonly record struct AtkValueSnapshot(AtkValueType Type, int Int);
+
+    public AtkValueSnapshot[] DumpAtkValueSnapshot(AtkAddonControl window)
+    {
+        var values = ReadAtkValues(window);
+        var snapshot = new AtkValueSnapshot[values.Length];
+        for (int i = 0; i < values.Length; i++)
+            snapshot[i] = new AtkValueSnapshot(values[i].AtkValueType, values[i].Int);
+        return snapshot;
+    }
 }

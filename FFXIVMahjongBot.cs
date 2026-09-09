@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using ff14bot.AClasses;
 using ff14bot.Behavior;
+using ff14bot.Helpers;
 using ff14bot.Managers;
 using FFXIVMahjong.Addon;
 using FFXIVMahjong.Core;
@@ -87,6 +88,20 @@ public sealed class FFXIVMahjongBot : BotBase
     /// </summary>
     private static readonly bool AutoClickNext = false;
 
+    /// <summary>
+    /// AtkValues snapshot from the most recent Pulse where no call prompt was active — kept
+    /// fresh every tick so that the instant a prompt appears, we can diff against a snapshot
+    /// from milliseconds earlier instead of guessing at a single dump in isolation. Tonight's
+    /// RE session got fooled twice by values that looked like a match but were actually stale
+    /// contents left over from a *previous* prompt (see docs/addon-capture-log.md) — a real
+    /// diff catches that automatically, since a stale value won't show up as "changed".
+    /// </summary>
+    private EmjAddonReader.AtkValueSnapshot[]? _lastNormalAtkSnapshot;
+
+    /// <summary>Snapshot taken the instant state 29 (hand-result screen) first appears, so we can diff it against the snapshot right as <see cref="HandResultStabilityWindow"/> elapses — hunting for whatever flag flips when the Next button visibly becomes clickable (user-observed 2026-09-08).</summary>
+    private EmjAddonReader.AtkValueSnapshot[]? _handResultFirstSeenSnapshot;
+    private bool _handResultReadyDiffLogged;
+
     public override string Name => "FFXIV Mahjong";
     public override PulseFlags PulseFlags => PulseFlags.All;
     public override bool IsAutonomous => true;
@@ -104,6 +119,9 @@ public sealed class FFXIVMahjongBot : BotBase
         _lastNextClickAttempt = DateTime.MinValue;
         _handResultFirstSeenAt = null;
         _lastDispatchAt = DateTime.MinValue;
+        _lastNormalAtkSnapshot = null;
+        _handResultFirstSeenSnapshot = null;
+        _handResultReadyDiffLogged = false;
     }
 
     public override void Pulse()
@@ -118,8 +136,15 @@ public sealed class FFXIVMahjongBot : BotBase
         // misreads on a genuine discard turn.
         if (_reader.IsCallPromptLikelyActive(window))
         {
+            bool justAppeared = _callPromptFirstSeenAt is null;
             DateTime firstSeen = _callPromptFirstSeenAt ?? DateTime.UtcNow;
             _callPromptFirstSeenAt = firstSeen;
+
+            if (justAppeared && _lastNormalAtkSnapshot is { } before)
+            {
+                var after = _reader.DumpAtkValueSnapshot(window);
+                LogAtkValueDiff("call-prompt appeared", before, after);
+            }
 
             if (DateTime.UtcNow - firstSeen < CallPromptBlockTimeout)
             {
@@ -139,16 +164,32 @@ public sealed class FFXIVMahjongBot : BotBase
         else
         {
             _callPromptFirstSeenAt = null;
+            _lastNormalAtkSnapshot = _reader.DumpAtkValueSnapshot(window);
         }
 
         int stateCode = _reader.ReadStateCode(window);
 
         if (stateCode == EmjOffsets.StateHandResultNext)
         {
+            bool justAppeared = _handResultFirstSeenAt is null;
             DateTime resultFirstSeen = _handResultFirstSeenAt ?? DateTime.UtcNow;
             _handResultFirstSeenAt = resultFirstSeen;
 
-            if (DateTime.UtcNow - resultFirstSeen < HandResultStabilityWindow)
+            if (justAppeared)
+            {
+                _handResultFirstSeenSnapshot = _reader.DumpAtkValueSnapshot(window);
+                _handResultReadyDiffLogged = false;
+            }
+
+            bool stable = DateTime.UtcNow - resultFirstSeen >= HandResultStabilityWindow;
+            if (stable && !_handResultReadyDiffLogged && _handResultFirstSeenSnapshot is { } beforeReady)
+            {
+                var afterReady = _reader.DumpAtkValueSnapshot(window);
+                LogAtkValueDiff("hand-result stability window elapsed", beforeReady, afterReady);
+                _handResultReadyDiffLogged = true;
+            }
+
+            if (!stable)
                 return; // still settling — let the result-modal animation finish before clicking
 
             if (AutoClickNext
@@ -162,6 +203,8 @@ public sealed class FFXIVMahjongBot : BotBase
             return;
         }
         _handResultFirstSeenAt = null;
+        _handResultFirstSeenSnapshot = null;
+        _handResultReadyDiffLogged = false;
 
         if (stateCode != EmjOffsets.StateOurTurnDiscard
             && stateCode != EmjOffsets.StatePostDrawOrCallDiscard
@@ -200,6 +243,20 @@ public sealed class FFXIVMahjongBot : BotBase
         _dispatcher.Discard(window, slotIndex, _reader.ReadHandSlotRaw(window, slotIndex));
         _lastActedHandSignature = signature;
         _lastDispatchAt = DateTime.UtcNow;
+    }
+
+    /// <summary>Logs every AtkValues index that differs between two snapshots — used to catch what actually changed at a state transition instead of guessing from one dump in isolation.</summary>
+    private static void LogAtkValueDiff(string label, EmjAddonReader.AtkValueSnapshot[] before, EmjAddonReader.AtkValueSnapshot[] after)
+    {
+        Logging.Write($"[FFXIVMahjong] atk diff ({label}): before.Length={before.Length} after.Length={after.Length}");
+        int max = Math.Max(before.Length, after.Length);
+        for (int i = 0; i < max; i++)
+        {
+            var b = i < before.Length ? before[i] : default;
+            var a = i < after.Length ? after[i] : default;
+            if (b.Type != a.Type || b.Int != a.Int)
+                Logging.Write($"[FFXIVMahjong]   [{i}] {b.Type}:{b.Int} -> {a.Type}:{a.Int}");
+        }
     }
 
     private static IReadOnlyList<Meld> PlaceholderMelds(int count)
