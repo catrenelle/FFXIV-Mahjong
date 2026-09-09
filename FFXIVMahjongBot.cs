@@ -387,26 +387,35 @@ public sealed class FFXIVMahjongBot : BotBase
                 return null;
             using var regionB = clientB.Clone(addonInClient, clientB.PixelFormat);
 
-            // Proportional to the addon panel itself (not a fixed pixel size) so this scales
-            // across different game resolutions/UI scales — tuned against a live 1008x560
-            // capture where a single tile looked roughly 1/16 of the panel width, 1/10 of the
-            // height. A naive bounding-box-of-all-changed-pixels approach was tried first and
-            // rejected live (2026-09-08): ambient PrintWindow rendering noise spread across the
-            // *whole* frame ballooned it to nearly the entire panel — see FindMostChangedRegion.
-            int windowWidth = Math.Max(20, addonInClient.Width / 16);
-            int windowHeight = Math.Max(20, addonInClient.Height / 10);
-            var tileRegion = ScreenTileMatcher.FindMostChangedRegion(regionA, regionB, windowWidth, windowHeight);
+            // Restrict the search to the play area (discard piles/compass), excluding the
+            // player-portrait strips on the left/right — live-caught 2026-09-08 (via the debug
+            // marker below) that a portrait's own idle animation changes far more between frames
+            // than the actual tile pulse, so an unrestricted search reliably lands on a portrait
+            // instead. Percentages tuned against the same 1008x560 capture that showed the
+            // compass area roughly centered, ~58% of width / ~80% of height, starting ~15% in.
+            var playArea = new Rectangle(
+                (int)(addonInClient.Width * 0.15),
+                0,
+                (int)(addonInClient.Width * 0.58),
+                (int)(addonInClient.Height * 0.80));
+            using var playA = regionA.Clone(playArea, regionA.PixelFormat);
+            using var playB = regionB.Clone(playArea, regionB.PixelFormat);
+
+            int windowWidth = Math.Max(20, playArea.Width / 12);
+            int windowHeight = Math.Max(20, playArea.Height / 8);
+            var tileRegion = ScreenTileMatcher.FindMostChangedRegion(playA, playB, windowWidth, windowHeight);
             if (tileRegion is not { } region)
                 return null;
 
-            using var crop = regionB.Clone(region, regionB.PixelFormat);
+            using var crop = playB.Clone(region, playB.PixelFormat);
             var result = _tileMatcher.MatchTile(crop);
+            var regionInFullPanel = new Rectangle(playArea.X + region.X, playArea.Y + region.Y, region.Width, region.Height);
 
             // Always dump the last detection for inspection — cheap, overwrites each time, and
-            // has already been essential for debugging (caught the oversized-region bug this
-            // way 2026-09-08) without needing a separate manual console snippet. The marked copy
-            // draws the chosen window directly on the full panel so it's obvious at a glance
-            // whether the algorithm landed anywhere near a real tile.
+            // has already been essential for debugging (caught the oversized-region bug and the
+            // portrait-animation bug this way 2026-09-08) without needing a separate manual
+            // console snippet. The marked copy draws the chosen window (offset back into full-
+            // panel coordinates) directly on the full panel for an at-a-glance sanity check.
             try
             {
                 Directory.CreateDirectory(DebugCaptureDirectory);
@@ -415,13 +424,17 @@ public sealed class FFXIVMahjongBot : BotBase
                 crop.Save(Path.Combine(DebugCaptureDirectory, "auto_crop.png"));
                 using var marked = new Bitmap(regionB);
                 using (var mg = Graphics.FromImage(marked))
-                using (var pen = new Pen(Color.Red, 2))
-                    mg.DrawRectangle(pen, region);
+                {
+                    using var playAreaPen = new Pen(Color.Yellow, 1);
+                    mg.DrawRectangle(playAreaPen, playArea);
+                    using var pen = new Pen(Color.Red, 2);
+                    mg.DrawRectangle(pen, regionInFullPanel);
+                }
                 marked.Save(Path.Combine(DebugCaptureDirectory, "auto_regionB_marked.png"));
             }
             catch { /* best-effort diagnostic only */ }
 
-            Logging.Write($"[FFXIVMahjong] screen-match region: {region} (window {windowWidth}x{windowHeight}, guess={result.Name} score={result.Score:F1})");
+            Logging.Write($"[FFXIVMahjong] screen-match region: {regionInFullPanel} (window {windowWidth}x{windowHeight}, guess={result.Name} score={result.Score:F1})");
             return result;
         }
         catch (Exception ex)
