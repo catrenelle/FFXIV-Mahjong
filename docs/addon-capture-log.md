@@ -725,3 +725,14 @@ screenshot (right specific wind unclear) — skipped rather than guessed. No ded
 built for this yet (numbered contact sheet was a one-off ad hoc script); worth formalizing next
 time this comes up if pond-mining keeps paying off — e.g. an on-demand full-panel dump not gated
 on a call prompt, plus an automated grid-slicer.
+
+One of those two "unclear" wind tiles got resolved right after: the user sent a screenshot from
+their own client of cell 4 in the contact sheet, cross-matched by eye against the other candidate
+wind cells (6, 10, 14, which share an identical different glyph among themselves) — cell 4's
+spidery/star-shaped character was visually distinct — and confirmed it as **East**. Extracted at
+34x26 and seeded `east_kamicha.png`. Kamicha now covers 11 tiles (7p, 9s, 3m, 1p, 4p, 8m, 6p, 3p,
+2m, 1m, east). Note for later: the row-major top-to-bottom order of the contact-sheet grid does
+NOT track chronological discard order cleanly (2m, the most recent discard, sits above 6p, an
+earlier one, in the grid) — the real pond likely wraps into rows/columns on its own logic that a
+naive fixed-pitch slice doesn't reproduce. Fine for this cell-by-cell identification workflow,
+but don't assume grid position = discard order for future pond-mining.
