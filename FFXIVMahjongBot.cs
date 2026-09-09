@@ -30,6 +30,7 @@ public sealed class FFXIVMahjongBot : BotBase
     private readonly EmjAddonReader _reader = new();
     private readonly EmjActionDispatcher _dispatcher = new();
     private readonly IDiscardPolicy _discardPolicy = new EfficiencyDiscardPolicy();
+    private readonly ICallPolicy _callPolicy = new HeuristicCallPolicy();
 
     private string _lastActedHandSignature = "";
     private DateTime _lastNextClickAttempt = DateTime.MinValue;
@@ -201,6 +202,32 @@ public sealed class FFXIVMahjongBot : BotBase
                 Logging.Write(tileGuess is { } guess
                     ? $"[FFXIVMahjong] screen-match guess: {guess.Name} (score={guess.Score:F1}, lower=better)"
                     : "[FFXIVMahjong] screen-match: no confident region found");
+
+                // Log-only recommendation, not dispatched — the reference library only covers
+                // one tile/position combo so far (2026-09-08), not enough to trust auto-clicking
+                // yet. Once coverage and match confidence are good, this is the hook point to
+                // wire in a real accept/pass dispatch instead of just logging.
+                if (tileGuess is { } identified && ParseTileName(identified.Name) is { } offeredTile)
+                {
+                    var currentHand = _reader.ReadSelfHand(window);
+                    // Seat/round wind aren't read from the addon yet (only affects the minor
+                    // "does a wind pair still give yakuhai" nuance in ImprovesShantenWithYakuPotential)
+                    // — East/East is a placeholder, not a confirmed read. Fine for a log-only
+                    // recommendation a human reviews, not for real dispatch.
+                    var seatWind = WindTile.East;
+                    var roundWind = WindTile.East;
+
+                    bool ponRecommended = _callPolicy.ShouldCallPon(currentHand, offeredTile, seatWind, roundWind);
+                    var chiTiles = _callPolicy.ShouldCallChi(currentHand, offeredTile, seatWind, roundWind);
+
+                    string recommendation = (ponRecommended, chiTiles) switch
+                    {
+                        (true, _) => "PON",
+                        (false, { } tiles) => $"CHI ({string.Join("+", tiles)})",
+                        _ => "PASS",
+                    };
+                    Logging.Write($"[FFXIVMahjong] call recommendation: {recommendation} on {offeredTile} (hand: {string.Join(",", currentHand.Concealed)})");
+                }
 
                 if (_lastNormalAtkSnapshot is { } before)
                 {
@@ -561,6 +588,34 @@ public sealed class FFXIVMahjongBot : BotBase
         if (textureOffsetId is >= 0 and < Tile.KindCount)
             return $" (texture-offset tile id {textureOffsetId} = {new Tile(textureOffsetId)})";
         return "";
+    }
+
+    /// <summary>Maps a <see cref="ScreenTileMatcher.MatchTile"/> result name (the reference filename, position suffix already stripped) back to a <see cref="Tile"/> — e.g. "7p", "north", "green".</summary>
+    private static Tile? ParseTileName(string name)
+    {
+        if (name.Length == 2 && char.IsDigit(name[0]))
+        {
+            int rank = name[0] - '0';
+            Suit? suit = name[1] switch
+            {
+                'm' => Suit.Man,
+                'p' => Suit.Pin,
+                's' => Suit.Sou,
+                _ => null,
+            };
+            return suit is { } s && rank is >= 1 and <= 9 ? Tile.FromSuitRank(s, rank) : null;
+        }
+        return name switch
+        {
+            "east" => Tile.FromSuitRank(Suit.Wind, 1),
+            "south" => Tile.FromSuitRank(Suit.Wind, 2),
+            "west" => Tile.FromSuitRank(Suit.Wind, 3),
+            "north" => Tile.FromSuitRank(Suit.Wind, 4),
+            "white" => Tile.FromSuitRank(Suit.Dragon, 1),
+            "green" => Tile.FromSuitRank(Suit.Dragon, 2),
+            "red" => Tile.FromSuitRank(Suit.Dragon, 3),
+            _ => null,
+        };
     }
 
     private static IReadOnlyList<Meld> PlaceholderMelds(int count)
