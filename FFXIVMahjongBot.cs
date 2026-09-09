@@ -423,14 +423,16 @@ public sealed class FFXIVMahjongBot : BotBase
                 playFrames.Add(full.Clone(playArea, full.PixelFormat));
             }
 
-            // Size tuned from a direct pixel measurement (2026-09-08), not a visual guess: a 4x-
-            // zoomed crop of a real captured tile measured ~35x45 (ratio ~0.78), while the
-            // previous formula (playArea.Height/8 ~= 56 tall) was 11px taller than the real tile
-            // — dragging a chunk of empty green felt below it into every comparison and diluting
-            // the match even when the search *location* was already exactly correct (live-caught:
-            // region landed squarely on the real glowing North Wind tile, still matched as "9m").
-            int windowHeight = Math.Max(20, playArea.Height / 10);
-            int windowWidth = Math.Max(16, (int)(windowHeight * 0.78));
+            // Re-measured (2026-09-08) directly from real captured pixel data, not a visual
+            // estimate: an ASCII color-map of an actual crop showed the tile only filled the top
+            // ~60% of the window, the rest pure green felt — the previous /10 divisor (~44 tall)
+            // was still nearly double the real ~26px tile height. Confirmed as a real improvement
+            // offline (not just a guess) by cropping the real tile tightly and rescoring against
+            // the reference: score dropped from 235 to 194 just from this. Width stayed ~34,
+            // giving a wide-short ~1.3 ratio — consistent with this specific pile position
+            // rendering tiles wider than tall (rotated relative to our upright reference art).
+            int windowHeight = Math.Max(16, playArea.Height / 17);
+            int windowWidth = Math.Max(16, playArea.Height / 13);
 
             // The central wall-count/turn indicator (the "61" diamond, its 4 dots, and the star)
             // has its own idle animation too — user-caught 2026-09-08 via side-by-side crops.
