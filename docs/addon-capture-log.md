@@ -656,3 +656,12 @@ yet). Confirmed via `.scratch/CallPolicyCheck`: fed 3m → `CHI (2m+4m)`, matchi
 exactly; fed the real 8m → `ShouldCallPon: true`, same missed call as before, now correctly
 attributed to a coverage gap rather than a bad crop. Seeded `8m_kamicha.png` — kamicha now covers
 6 tiles (7p, 9s, 3m, 1p, 4p, 8m).
+
+## Seventh kamicha tile (6p), new hand, North now kamicha (2026-09-08 later)
+
+Fresh hand, seats rotated again — North is kamicha this time (user-confirmed), region (338,336)
+matching the established kamicha cluster. North discarded 6p, calling Chi; screen-match guessed
+4p (score 101.0, no 6p-kamicha reference existed). Checked via `.scratch/CallPolicyCheck`: fed
+4p → PASS (matches the live log exactly); fed the real 6p → `ShouldCallChi` returns **7p+8p**,
+matching the user's actual call. Seeded `6p_kamicha.png` — kamicha now covers 7 tiles (7p, 9s,
+3m, 1p, 4p, 8m, 6p).
