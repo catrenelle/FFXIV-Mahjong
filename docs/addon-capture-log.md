@@ -437,10 +437,16 @@ shimocha; self's own hand isn't relevant here) = 102 possible entries for full c
 partial coverage (common tiles first) is still useful as it accumulates. Each future confirmed
 live capture (user states the ground-truth tile, same discipline as tonight) can be dropped
 into `Assets/TileReference/{tile}_{position}.png` directly — no code changes needed, `MatchTile`
-already searches every file in the directory. Next session: confirm this generalizes (does the
-seeded reference help identify a *different* North Wind capture at the same position, not just
-match itself — genuinely untested yet since we only ever had the one still-open prompt tonight)
-and start adding more positions/tiles as they come up naturally during play.
+already searches every file in the directory.
+
+**Generalization confirmed (2026-09-08, immediately after deploying).** A fresh live capture
+(genuinely new screen grab, not a replay of the saved reference file) of the same North Wind
+tile at the same position scored **6.3** — in the same range as clean reference-vs-reference
+self-matches, and nowhere near the ~132-235 range flat art produced. This wasn't a fluke of
+matching a file against itself; the approach demonstrably works on independent captures. Path
+forward is now just building coverage: capture and confirm more tile/position combinations
+during normal play, same one-line-per-file process, no further code changes anticipated unless
+a genuinely new failure mode shows up.
 
 ## Next-button dispatch downgraded: reproduces the reference project's "stuck state 32" (2026-09-08)
 
