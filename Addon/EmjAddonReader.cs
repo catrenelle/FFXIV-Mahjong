@@ -23,6 +23,9 @@ public sealed class EmjAddonReader
         return window is { IsVisible: true };
     }
 
+    /// <summary>The game client's own window handle, for <see cref="ScreenTileMatcher.CaptureWindowClient"/> — captures the window's actual content directly, immune to whatever else is on top of it on screen (unlike a raw screen-coordinate grab).</summary>
+    public static IntPtr GetGameWindowHandle() => RBCore.Memory.Process.MainWindowHandle;
+
     public int ReadStateCode(AtkAddonControl window)
     {
         var values = ReadAtkValues(window);

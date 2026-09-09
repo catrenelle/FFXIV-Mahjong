@@ -348,11 +348,14 @@ public sealed class FFXIVMahjongBot : BotBase
     }
 
     /// <summary>
-    /// Captures the addon window twice, ~200ms apart, and diffs them to locate the pulsing
-    /// highlighted tile (see <see cref="ScreenTileMatcher"/>) — self-locating, no node IDs or
-    /// hardcoded offsets needed. Blocks Pulse() briefly, but only once per newly-seen prompt
-    /// (gated by the caller's `justAppeared` check), same tradeoff already accepted elsewhere
-    /// (e.g. the 3.5s hand-result stability wait).
+    /// Captures the game window's own content twice, ~200ms apart, and diffs them to locate the
+    /// pulsing highlighted tile (see <see cref="ScreenTileMatcher"/>) — self-locating, no node
+    /// IDs or hardcoded offsets needed. Uses <c>PrintWindow</c> (via the game's own hwnd) rather
+    /// than a raw screen-coordinate grab, so it isn't corrupted by whatever else is on top of
+    /// the game on screen — live-caught a bad match caused by exactly that (a browser window
+    /// overlapping the game, 2026-09-08). Blocks Pulse() briefly, but only once per newly-seen
+    /// prompt (gated by the caller's `justAppeared` check), same tradeoff already accepted
+    /// elsewhere (e.g. the 3.5s hand-result stability wait).
     /// </summary>
     private (string Name, double Score)? TryIdentifyGlowingTile(AtkAddonControl window)
     {
@@ -362,17 +365,29 @@ public sealed class FFXIVMahjongBot : BotBase
         {
             if (window.Bounds is not { Width: > 0, Height: > 0 } boundsF)
                 return null;
+            var screenBounds = Rectangle.Round(boundsF);
 
-            var bounds = Rectangle.Round(boundsF);
-            using var captureA = ScreenTileMatcher.CaptureRegion(bounds);
+            IntPtr hwnd = EmjAddonReader.GetGameWindowHandle();
+            using var clientA = ScreenTileMatcher.CaptureWindowClient(hwnd, out Point origin);
+            if (clientA is null)
+                return null;
+            var addonInClient = new Rectangle(screenBounds.X - origin.X, screenBounds.Y - origin.Y, screenBounds.Width, screenBounds.Height);
+            if (addonInClient.X < 0 || addonInClient.Y < 0
+                || addonInClient.Right > clientA.Width || addonInClient.Bottom > clientA.Height)
+                return null; // addon reports being outside the captured client area — stale bounds, don't trust the crop
+
+            using var regionA = clientA.Clone(addonInClient, clientA.PixelFormat);
             Thread.Sleep(200);
-            using var captureB = ScreenTileMatcher.CaptureRegion(bounds);
+            using var clientB = ScreenTileMatcher.CaptureWindowClient(hwnd, out _);
+            if (clientB is null)
+                return null;
+            using var regionB = clientB.Clone(addonInClient, clientB.PixelFormat);
 
-            var changed = ScreenTileMatcher.FindChangedRegion(captureA, captureB);
-            if (changed is not { Width: >= 4, Height: >= 4 } region)
+            var changed = ScreenTileMatcher.FindChangedRegion(regionA, regionB);
+            if (changed is not { Width: >= 4, Height: >= 4 } tileRegion)
                 return null;
 
-            using var crop = captureB.Clone(region, captureB.PixelFormat);
+            using var crop = regionB.Clone(tileRegion, regionB.PixelFormat);
             return _tileMatcher.MatchTile(crop);
         }
         catch (Exception ex)
