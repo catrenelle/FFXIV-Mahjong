@@ -609,3 +609,18 @@ any man tile existed). Hand `8m,8m,2p,3p,7s,7s,8s` (7 concealed, 2 melds — mat
 policy says PASS — matches the live log exactly (fix behaving consistently with bad input again).
 Fed the real 8m, `ShouldCallPon` returns **true** — a real call the coverage gap caused to be
 missed, not a policy bug. Seeded `8m_toimen.png` — toimen now has 2 tiles covered (7p, 8m).
+
+## Fifth kamicha tile (4p), new hand, position resolved by pixel-exact match over score ambiguity (2026-09-08 later)
+
+New hand (fresh deal, 13 concealed/0 melds — seat winds have rotated again). East discarded 4p,
+calling Chi; screen-match guessed 7p (score 115.5). Region (300,308) is a **pixel-exact** match
+to the previous hand's confirmed South/kamicha 1p capture — but a direct per-reference score
+check came out ambiguous (`7p_toimen` 115.5 vs `7p_kamicha` 124.8, only 9 apart — the same n=1
+fragility flagged two sections up). Went with **kamicha** on the strength of the exact-pixel
+match: the whole position-specific-library premise is that the game renders each relative seat's
+discard area in a fixed screen zone regardless of which wind sits there, so an identical pixel
+region is stronger evidence than a marginal score difference between two still-sparse references.
+
+Ground truth via `.scratch/CallPolicyCheck`: fed 7p → PASS (matches the live log exactly). Fed
+the real 4p → `ShouldCallChi` returns **2p+3p**, matching the user's actual call. Seeded
+`4p_kamicha.png` — kamicha now has 5 tiles covered (7p, 9s, 3m, 1p, 4p).
