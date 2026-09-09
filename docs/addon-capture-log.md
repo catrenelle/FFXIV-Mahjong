@@ -535,3 +535,24 @@ observation window). Verified correct via `.scratch/CallPolicyCheck`: this hand 
 consume the pair for no shanten gain. Checked both with the placeholder melds the live code
 actually used and with the one meld we know for real substituted in (the Chi); same answer
 either way, so the meld-type-blindness caveat flagged in the previous section didn't bite here.
+
+## Second kamicha-position tile (9s), and a real policy-vs-human divergence, not a bug (2026-09-08 later)
+
+New hand (fresh deal — 13 concealed, 0 melds), South discarded 9s (South = kamicha for this
+hand — seat winds rotate hand to hand, kamicha's *screen region* doesn't; region ~338,336 here
+vs. ~338,364 for the earlier West-kamicha capture, close enough in X and a plausible different
+discard-pile slot in Y). Screen-match guessed **7s** (score 88.3 — no kamicha-side sou reference
+existed yet at all, so it fell back to flat art at low confidence). User confirmed live: real
+tile was 9s, called Chi with 7s+8s. Hand: `4m,5m,8m,8m,9m,2p,3p,5p,5pr,3s,7s,7s,8s`.
+
+Checked both tiles through `.scratch/CallPolicyCheck`: fed the wrong tile (7s), the policy says
+PON — matching exactly what got logged, confirming the recommendation *code* isn't buggy, just
+its input. Fed the real tile (9s), `ShouldCallChi` returns **null (PASS)**, even though the call
+does improve shanten (3→2): `HasOpenYakuPotential` finds no path — no yakuhai, toitoi's out
+(it's a Chi), honitsu/chinitsu's out (hand still spans all three suits), and tanyao's out because
+9s is a terminal. This is the heuristic working as designed (documented in
+`Policy/HeuristicCallPolicy.cs`: shape improvement alone isn't enough without a yaku path), not
+a bug — a genuine divergence between the conservative heuristic and the human's live call, which
+may have been reading an angle (sanshoku, forward planning) the heuristic's yakuhai/toitoi/
+honitsu/tanyao checklist doesn't model. Seeded `9s_kamicha.png` — second tile now covered at the
+kamicha position (7p, 9s).
