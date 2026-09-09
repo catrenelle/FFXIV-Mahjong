@@ -265,6 +265,30 @@ public sealed class ScreenTileMatcher
     ];
 
     /// <summary>
+    /// Reference filenames suffixed with one of these (e.g. <c>north_shimocha.png</c>) are
+    /// position-specific captures — a real confirmed screenshot from that discard-pile position,
+    /// not flat promotional art. Added 2026-09-08 after discovering flat reference art scores
+    /// dramatically worse against opponent-pile tiles than a same-position real capture does
+    /// (~132 vs ~17 in an offline test) — the table is rendered in 3D perspective, so tiles on
+    /// the sides render trapezoidal/skewed in a way a pure rotation can't correct, but a
+    /// reference captured from the *same* position already has the same skew baked in. Stripped
+    /// from the returned name so callers see the plain tile identity regardless of which variant
+    /// (flat or position-specific) actually won the match. Build this library incrementally from
+    /// future confirmed live captures — one sample (north/shimocha) as of 2026-09-08.
+    /// </summary>
+    private static readonly string[] PositionSuffixes = ["_kamicha", "_toimen", "_shimocha"];
+
+    private static string NormalizeTileName(string rawName)
+    {
+        foreach (var suffix in PositionSuffixes)
+        {
+            if (rawName.EndsWith(suffix, StringComparison.Ordinal))
+                return rawName[..^suffix.Length];
+        }
+        return rawName;
+    }
+
+    /// <summary>
     /// Best-guess tile name for a cropped region, scored by mean per-pixel RGB difference
     /// against every reference (resized to match) — lower score is a better match. Tries the
     /// crop at all 4 rotations, not just as-captured: discard piles are rotated to face each
@@ -292,21 +316,38 @@ public sealed class ScreenTileMatcher
                 bestName = name;
             }
         }
-        return (bestName, bestScore);
+        return (NormalizeTileName(bestName), bestScore);
     }
 
+    /// <summary>
+    /// Compares only the central ~67% of each image, skipping a margin around the outside.
+    /// Every mahjong tile shares the same cream background and black border regardless of its
+    /// value — a whole-tile comparison spends most of its weight matching that shared border
+    /// (which matches almost equally well against every candidate) and dilutes the one part
+    /// that's actually discriminative, the character/pattern in the middle. Live-caught
+    /// 2026-09-08: a crop that was correctly located and cleanly cropped still matched wrong
+    /// until this was added.
+    /// </summary>
     private static double MeanPixelDifference(Bitmap a, Bitmap b)
     {
+        int marginX = a.Width / 6;
+        int marginY = a.Height / 6;
+        int x0 = marginX, y0 = marginY;
+        int x1 = Math.Max(x0 + 1, a.Width - marginX);
+        int y1 = Math.Max(y0 + 1, a.Height - marginY);
+
         long total = 0;
-        for (int y = 0; y < a.Height; y++)
+        int count = 0;
+        for (int y = y0; y < y1; y++)
         {
-            for (int x = 0; x < a.Width; x++)
+            for (int x = x0; x < x1; x++)
             {
                 Color pa = a.GetPixel(x, y);
                 Color pb = b.GetPixel(x, y);
                 total += Math.Abs(pa.R - pb.R) + Math.Abs(pa.G - pb.G) + Math.Abs(pa.B - pb.B);
+                count++;
             }
         }
-        return (double)total / (a.Width * a.Height);
+        return count == 0 ? double.MaxValue : (double)total / count;
     }
 }
