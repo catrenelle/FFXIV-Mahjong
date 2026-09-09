@@ -512,4 +512,26 @@ yaku-potential heuristic reads placeholder meld *type* (always Pon) and *suit* (
 its toitoi/honitsu reachability checks, not just meld count — so this is a looser approximation
 than the discard path's exactly-equivalent one. Acceptable for a human-reviewed log line, not
 sufficient to drive real accept dispatch. 40/40 tests pass, deployed dev→live (`diff -rq` clean),
-not yet committed.
+committed `1665ae7`. **Live-confirmed working** minutes later in the same session: a re-poll of
+the same West/kamicha 7p prompt correctly logged `CHI (5p+6p) on 7p` instead of the earlier bug's
+PASS.
+
+## Third position-specific reference: 7p at toimen, and a clean PASS confirmation (2026-09-08 later)
+
+User accepted the Chi (5p+6p+7p) recommended above, discarded 9p, then South discarded another
+7p, opening a new call prompt. Screen-match correctly guessed `7p` from flat art alone (score
+86.1 — no toimen-specific reference existed yet; a real but low-confidence match, well below the
+"wrong" range of 130-235 but well above the "clean" position-specific range of 2-9 seen for
+kamicha/shimocha). South = toimen for this hand: turn order E-S-W-N with self=North and West
+already confirmed as kamicha (see the second-reference section above) puts South two seats over
+= toimen, matching this being a third, screen-region-distinct capture (~479,150, vs kamicha's
+~338,364 and shimocha's ~525,253). Seeded `Assets/TileReference/7p_toimen.png` — all three
+relative-seat shapes now have at least one real sample.
+
+Recommendation logged `PASS on 7p` for hand `6m,7m,8m,7p,7p,5s,7s` (7 concealed = 13-3×2, two
+melds: the real Chi just made, plus one still-genuinely-unknown meld from before this session's
+observation window). Verified correct via `.scratch/CallPolicyCheck`: this hand is already
+0-shanten (tenpai) — `7p,7p` is the pair, `5s,7s` waits on 6s — so Pon-ing the offered 7p would
+consume the pair for no shanten gain. Checked both with the placeholder melds the live code
+actually used and with the one meld we know for real substituted in (the Chi); same answer
+either way, so the meld-type-blindness caveat flagged in the previous section didn't bite here.
