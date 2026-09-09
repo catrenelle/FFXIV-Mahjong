@@ -209,24 +209,44 @@ public sealed class FFXIVMahjongBot : BotBase
                 // wire in a real accept/pass dispatch instead of just logging.
                 if (tileGuess is { } identified && ParseTileName(identified.Name) is { } offeredTile)
                 {
-                    var currentHand = _reader.ReadSelfHand(window);
-                    // Seat/round wind aren't read from the addon yet (only affects the minor
-                    // "does a wind pair still give yakuhai" nuance in ImprovesShantenWithYakuPotential)
-                    // — East/East is a placeholder, not a confirmed read. Fine for a log-only
-                    // recommendation a human reviews, not for real dispatch.
-                    var seatWind = WindTile.East;
-                    var roundWind = WindTile.East;
+                    var rawHand = _reader.ReadSelfHand(window);
 
-                    bool ponRecommended = _callPolicy.ShouldCallPon(currentHand, offeredTile, seatWind, roundWind);
-                    var chiTiles = _callPolicy.ShouldCallChi(currentHand, offeredTile, seatWind, roundWind);
+                    // A call decision (not our discard turn) means we're holding 13 minus 3
+                    // tiles per prior call — 13/10/7/4/1 — same meld-count-from-concealed-count
+                    // inference as the discard path (line ~361), applied here too. Without it,
+                    // a hand with an existing meld silently ran the policy 3 tiles short: a real
+                    // 02:11:42 live capture (West/kamicha discarding 7p onto a 10-concealed-tile
+                    // hand) computed ShouldCallPon/Chi against a phantom 10-"tile" hand instead
+                    // of the true 13, which the yaku/shanten heuristics were never designed for.
+                    int callConcealedCount = rawHand.Concealed.Count;
+                    Hand? currentHand = callConcealedCount != 0 && callConcealedCount % 3 == 1
+                        ? BuildHandForCallDecision(rawHand, (13 - callConcealedCount) / 3)
+                        : null;
 
-                    string recommendation = (ponRecommended, chiTiles) switch
+                    if (currentHand is null)
                     {
-                        (true, _) => "PON",
-                        (false, { } tiles) => $"CHI ({string.Join("+", tiles)})",
-                        _ => "PASS",
-                    };
-                    Logging.Write($"[FFXIVMahjong] call recommendation: {recommendation} on {offeredTile} (hand: {string.Join(",", currentHand.Concealed)})");
+                        Logging.Write($"[FFXIVMahjong] call recommendation: skipped (concealed count {callConcealedCount} doesn't fit a call-decision shape)");
+                    }
+                    else
+                    {
+                        // Seat/round wind aren't read from the addon yet (only affects the minor
+                        // "does a wind pair still give yakuhai" nuance in ImprovesShantenWithYakuPotential)
+                        // — East/East is a placeholder, not a confirmed read. Fine for a log-only
+                        // recommendation a human reviews, not for real dispatch.
+                        var seatWind = WindTile.East;
+                        var roundWind = WindTile.East;
+
+                        bool ponRecommended = _callPolicy.ShouldCallPon(currentHand, offeredTile, seatWind, roundWind);
+                        var chiTiles = _callPolicy.ShouldCallChi(currentHand, offeredTile, seatWind, roundWind);
+
+                        string recommendation = (ponRecommended, chiTiles) switch
+                        {
+                            (true, _) => "PON",
+                            (false, { } tiles) => $"CHI ({string.Join("+", tiles)})",
+                            _ => "PASS",
+                        };
+                        Logging.Write($"[FFXIVMahjong] call recommendation: {recommendation} on {offeredTile} (hand: {string.Join(",", currentHand.Concealed)})");
+                    }
                 }
 
                 if (_lastNormalAtkSnapshot is { } before)
@@ -623,6 +643,18 @@ public sealed class FFXIVMahjongBot : BotBase
         var placeholder = Meld.Pon(Tile.FromSuitRank(Suit.Man, 1), RelativeSeat.Kamicha);
         return Enumerable.Repeat(placeholder, count).ToList();
     }
+
+    /// <summary>
+    /// Same placeholder-meld-count trick as <see cref="PlaceholderMelds"/>/the discard path
+    /// above, but for a hand not on its own discard turn (13 tiles minus 3 per prior call,
+    /// i.e. concealed count 13/10/7/4/1) rather than the discard-turn shape (14 minus 3 per
+    /// call). Needed for <see cref="ICallPolicy"/>'s Pon/Chi heuristics, which — unlike
+    /// Shanten/Ukeire — also read placeholder meld *content* (suit/type) for the yaku-potential
+    /// check, so this is a looser approximation than the discard path's: fine for a log-only
+    /// recommendation, not accurate enough to drive real dispatch.
+    /// </summary>
+    private static Hand BuildHandForCallDecision(Hand rawHand, int meldCount) =>
+        meldCount == 0 ? rawHand : new Hand(rawHand.Concealed, PlaceholderMelds(meldCount));
 
     private int FindSlotForTile(AtkAddonControl window, Tile tile)
     {

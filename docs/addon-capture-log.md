@@ -488,3 +488,28 @@ AtkValues immediately before and after triggering the action, diff them, and
 confirm the visible game state actually changed before trusting an opcode —
 a call that "returns" success without moving game state is a real failure
 mode worth checking for explicitly, not just assuming success.
+
+## Call-recommendation meld-count bug found and fixed (2026-09-08 later)
+
+The log-only Pon/Chi recommendation (added in `1e5bc66`) fed `_reader.ReadSelfHand(window)`
+straight into `HeuristicCallPolicy` with no melds at all, unlike the discard path a few lines
+below it, which already infers a meld *count* from the concealed-tile count (`FFXIVMahjongBot.cs`
+~line 361) because `ReadSelfHand` never populates `Hand.Melds`. A real capture caught this going
+wrong: 02:11:42, West (kamicha) discarded 7p onto a 10-concealed-tile hand (`6m,7m,8m,5pr,6p,7p,
+7p,9p,5s,7s` — 10 = 13 − 3×1, meaning one meld already exists), and the bot logged
+`call recommendation: PASS on Green` (the "Green" was also wrong — see the screen-match section
+above, pre-dates that reference being seeded). Rebuilt the exact hand in `.scratch/
+CallPolicyCheck` and ran it both ways: with 0 melds (matching what the live code actually did),
+`ShouldCallPon`/`ShouldCallChi` both come back negative (shanten 2, no legal-looking improvement).
+With a 1-meld placeholder (matching the true concealed-tile count), shanten drops to 1 and
+`ShouldCallChi` returns **5p+6p** (a real Chi, using the held red 5p) — a legitimate call the
+buggy code silently missed.
+
+Fixed by adding `BuildHandForCallDecision` (mirrors `PlaceholderMelds`, but for the call-decision
+tile count 13/10/7/4/1 rather than the discard-turn count 14/11/8/5/2) and applying it before
+calling into `_callPolicy`. Caveat noted in code: unlike the discard path, `HeuristicCallPolicy`'s
+yaku-potential heuristic reads placeholder meld *type* (always Pon) and *suit* (always Man) for
+its toitoi/honitsu reachability checks, not just meld count — so this is a looser approximation
+than the discard path's exactly-equivalent one. Acceptable for a human-reviewed log line, not
+sufficient to drive real accept dispatch. 40/40 tests pass, deployed dev→live (`diff -rq` clean),
+not yet committed.
