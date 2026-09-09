@@ -594,3 +594,18 @@ capture belongs to; trust the user's stated seat identity.
 
 Next capture (South, 1p, region 300,308) matched correctly too (score 100.6) and was seeded as
 `1p_kamicha.png` — kamicha now has 4 tiles covered (7p, 9s, 3m, 1p).
+
+## Second toimen tile (8m) — a real missed Pon caught (2026-09-08 later)
+
+East discarded 8m. East = toimen for this hand: South is confirmed kamicha, and in E-S-W-N turn
+order that puts self at West (kamicha is the seat immediately before self), making shimocha=North
+and toimen=East. Consistent with region (348,152) — Y near-identical to the established toimen
+Y (~150), X shifted (~348 vs ~479) the same way kamicha's X has shifted between discards from a
+growing pile.
+
+Screen-match guessed **4s** (score 152.1, squarely in the "wrong" range — no toimen reference for
+any man tile existed). Hand `8m,8m,2p,3p,7s,7s,8s` (7 concealed, 2 melds — matches what the live
+`BuildHandForCallDecision` fix already infers). Checked via `.scratch/CallPolicyCheck`: fed 4s,
+policy says PASS — matches the live log exactly (fix behaving consistently with bad input again).
+Fed the real 8m, `ShouldCallPon` returns **true** — a real call the coverage gap caused to be
+missed, not a policy bug. Seeded `8m_toimen.png` — toimen now has 2 tiles covered (7p, 8m).
