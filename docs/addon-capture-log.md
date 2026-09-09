@@ -691,3 +691,37 @@ with 3m+4m; screen-match guessed 8m (score 90.2, no 2m-kamicha reference existed
 returns **3m+4m**, matching the user's actual call — and this one genuinely improves the hand
 (unlike the 3p case). Seeded `2m_kamicha.png` — kamicha now covers 9 tiles (7p, 9s, 3m, 1p, 4p,
 8m, 6p, 3p, 2m).
+
+## New sourcing method: mining discard ponds instead of only call prompts (2026-09-08 later)
+
+User's idea, tried and abandoned first: synthesize the remaining ~24 kamicha tiles by fitting a
+single perspective transform from the 9 known (flat, kamicha) pairs and applying it to the rest.
+Built and cross-validated it (`.scratch/TileSynthesis`, not committed) — leave-one-out held-out
+scores averaged 178.3, barely better than a no-warp baseline of 199.4, both far worse than the
+2-20 range real captures get, and the warped output was visibly wrong (one fitted corner even
+landed outside the 34px target). The single-global-homography approach doesn't capture whatever
+else differs about kamicha's rendering (lighting, blur, maybe non-projective distortion) — dropped
+entirely per user's call, no further attempt planned.
+
+Better idea, adopted: a discard pond stays on screen for the whole hand, not just during a call
+prompt, and (per real mahjong convention, confirmed here) tiles claimed by *any* player's call
+stay visible in the pond, just visually marked (darker/grayer tone) rather than removed. So one
+full-panel screenshot (already auto-saved as `auto_regionB.png` on every call-prompt event) can
+carry many tile identities per capture — both fresh coverage (silent discards that never
+triggered a call) and free duplicate samples of tiles we already know (helps the n=1 fragility
+noted earlier). Worked through the workflow live: sliced North's pond from the existing
+`auto_regionB.png` into a numbered contact sheet of candidate cells (`.scratch/` — ad hoc, not
+committed), and the user identified cell 8 as `1m` (a called-away tile, shown in the game's own
+"claimed" darker/grayer tone, confirmed by the user's own screenshot of that exact cell). Extracted
+at the standard 34x26 crop size and seeded `1m_kamicha.png` — kamicha's first tile sourced from a
+pond rather than a live call prompt. Its tone is a genuine called-tile marker, not a fresh
+glowing capture, but that's within the natural brightness range already seen across the library
+(compare `8m_kamicha.png`'s fairly neutral tone vs `2m_kamicha.png`'s bright glow-peak capture) —
+not flagged as lower-confidence beyond that. Kamicha now covers 10 tiles (7p, 9s, 3m, 1p, 4p, 8m,
+6p, 3p, 2m, 1m).
+
+Two wind tiles in the same pond couldn't be identified even by the user from the compressed
+screenshot (right specific wind unclear) — skipped rather than guessed. No dedicated tooling was
+built for this yet (numbered contact sheet was a one-off ad hoc script); worth formalizing next
+time this comes up if pond-mining keeps paying off — e.g. an on-demand full-panel dump not gated
+on a call prompt, plus an automated grid-slicer.
