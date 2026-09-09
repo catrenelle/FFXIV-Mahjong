@@ -105,6 +105,18 @@ public sealed class FFXIVMahjongBot : BotBase
     private int[]? _lastNormalAgentSnapshot;
     private bool _agentResolutionLogged;
 
+    /// <summary>
+    /// Snapshots taken the instant a call prompt first appears (not just the pre-prompt
+    /// baseline), kept so we can diff again a bit later — catches a field that gets written
+    /// asynchronously (e.g. a delayed network round-trip) rather than in the same tick the
+    /// prompt itself becomes visible, which the immediate justAppeared diff would miss.
+    /// </summary>
+    private EmjAddonReader.AtkValueSnapshot[]? _callPromptAppearedAtkSnapshot;
+    private int[]? _callPromptAppearedRawSnapshot;
+    private int[]? _callPromptAppearedAgentSnapshot;
+    private bool _callPromptDelayedDiffLogged;
+    private static readonly TimeSpan CallPromptDelayedDiffDelay = TimeSpan.FromSeconds(1.5);
+
     /// <summary>Snapshot taken the instant state 29 (hand-result screen) first appears, so we can diff it against the snapshot right as <see cref="HandResultStabilityWindow"/> elapses — hunting for whatever flag flips when the Next button visibly becomes clickable (user-observed 2026-09-08).</summary>
     private EmjAddonReader.AtkValueSnapshot[]? _handResultFirstSeenSnapshot;
     private bool _handResultReadyDiffLogged;
@@ -129,6 +141,10 @@ public sealed class FFXIVMahjongBot : BotBase
         _lastNormalAtkSnapshot = null;
         _lastNormalRawSnapshot = null;
         _lastNormalAgentSnapshot = null;
+        _callPromptAppearedAtkSnapshot = null;
+        _callPromptAppearedRawSnapshot = null;
+        _callPromptAppearedAgentSnapshot = null;
+        _callPromptDelayedDiffLogged = false;
         _handResultFirstSeenSnapshot = null;
         _handResultReadyDiffLogged = false;
     }
@@ -149,21 +165,45 @@ public sealed class FFXIVMahjongBot : BotBase
             DateTime firstSeen = _callPromptFirstSeenAt ?? DateTime.UtcNow;
             _callPromptFirstSeenAt = firstSeen;
 
-            if (justAppeared && _lastNormalAtkSnapshot is { } before)
+            if (justAppeared)
             {
-                var after = _reader.DumpAtkValueSnapshot(window);
-                LogAtkValueDiff("call-prompt appeared", before, after);
+                _callPromptDelayedDiffLogged = false;
+
+                if (_lastNormalAtkSnapshot is { } before)
+                {
+                    var after = _reader.DumpAtkValueSnapshot(window);
+                    LogAtkValueDiff("call-prompt appeared", before, after);
+                    _callPromptAppearedAtkSnapshot = after;
+                }
+                if (_lastNormalRawSnapshot is { } rawBefore)
+                {
+                    var rawAfter = _reader.DumpRawMemorySnapshot(window);
+                    LogRawMemoryDiff("call-prompt appeared (addon)", rawBefore, rawAfter);
+                    _callPromptAppearedRawSnapshot = rawAfter;
+                }
+                if (_lastNormalAgentSnapshot is { } agentBefore)
+                {
+                    var agentAfter = _reader.DumpAgentEmjRawMemorySnapshot();
+                    if (agentAfter is not null)
+                        LogRawMemoryDiff("call-prompt appeared (AgentEmj)", agentBefore, agentAfter);
+                    _callPromptAppearedAgentSnapshot = agentAfter;
+                }
             }
-            if (justAppeared && _lastNormalRawSnapshot is { } rawBefore)
+            else if (!_callPromptDelayedDiffLogged && DateTime.UtcNow - firstSeen >= CallPromptDelayedDiffDelay)
             {
-                var rawAfter = _reader.DumpRawMemorySnapshot(window);
-                LogRawMemoryDiff("call-prompt appeared (addon)", rawBefore, rawAfter);
-            }
-            if (justAppeared && _lastNormalAgentSnapshot is { } agentBefore)
-            {
-                var agentAfter = _reader.DumpAgentEmjRawMemorySnapshot();
-                if (agentAfter is not null)
-                    LogRawMemoryDiff("call-prompt appeared (AgentEmj)", agentBefore, agentAfter);
+                // Catches a field that gets written a moment after the prompt itself becomes
+                // visible (e.g. an async network round-trip) instead of in the very same tick.
+                _callPromptDelayedDiffLogged = true;
+                if (_callPromptAppearedAtkSnapshot is { } atkBase)
+                    LogAtkValueDiff("call-prompt +1.5s", atkBase, _reader.DumpAtkValueSnapshot(window));
+                if (_callPromptAppearedRawSnapshot is { } rawBase)
+                    LogRawMemoryDiff("call-prompt +1.5s (addon)", rawBase, _reader.DumpRawMemorySnapshot(window));
+                if (_callPromptAppearedAgentSnapshot is { } agentBase)
+                {
+                    var agentNow = _reader.DumpAgentEmjRawMemorySnapshot();
+                    if (agentNow is not null)
+                        LogRawMemoryDiff("call-prompt +1.5s (AgentEmj)", agentBase, agentNow);
+                }
             }
 
             if (DateTime.UtcNow - firstSeen < CallPromptBlockTimeout)
@@ -184,6 +224,10 @@ public sealed class FFXIVMahjongBot : BotBase
         else
         {
             _callPromptFirstSeenAt = null;
+            _callPromptAppearedAtkSnapshot = null;
+            _callPromptAppearedRawSnapshot = null;
+            _callPromptAppearedAgentSnapshot = null;
+            _callPromptDelayedDiffLogged = false;
             _lastNormalAtkSnapshot = _reader.DumpAtkValueSnapshot(window);
             _lastNormalRawSnapshot = _reader.DumpRawMemorySnapshot(window);
             _lastNormalAgentSnapshot = _reader.DumpAgentEmjRawMemorySnapshot();
