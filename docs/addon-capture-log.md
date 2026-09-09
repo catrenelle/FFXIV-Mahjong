@@ -318,15 +318,32 @@ reading a value out of memory at all. Two blockers, one solved:
   style also shown on that page, which the game doesn't actually render), not screenshots of our
   own gameplay (which would need many hands played to naturally encounter all 34 kinds). See
   `Assets/TileReference/README.md` for provenance and filenames.
-- **Locating the crop region on screen**: still open. We have `AtkAddonControl.Bounds`
-  (confirmed to exist via RB reflection) for the *window's* screen-space rectangle, but no
-  per-node bounds — RB doesn't expose child-node position the way it exposes button/label text.
-  Likely path: since the UI layout is fixed (each seat's discard pile always renders in the same
-  relative position within the window), empirically determine kamicha's discard-pile region as
-  a fixed offset from the window bounds by comparing a live screenshot against the reported
-  `Bounds` next time a call prompt is up. Not yet attempted.
-- No native screenshot API found in RB itself — would need standard .NET screen capture
-  (`Graphics.CopyFromScreen` or equivalent), not RB-specific.
+- **Locating the crop region on screen**: solved differently than planned, and better. User
+  pointed out the highlighted tile *pulses* (a brightness animation) while nothing else on the
+  frozen discard/hand display changes during a call decision — so diffing two screen captures
+  ~200ms apart self-locates its bounding box automatically, no node IDs or hardcoded offsets
+  needed at all. Implemented as `Addon/ScreenTileMatcher.cs` (`FindChangedRegion` for the diff,
+  `MatchTile` for comparing the crop against the 32 references by mean pixel difference), using
+  `AtkAddonControl.Bounds` (confirmed via RB reflection) to scope the capture to just the addon
+  window. No native RB screenshot API — uses standard `Graphics.CopyFromScreen`.
+
+**Built and wired in, log-only (2026-09-08, same session)**. Added `System.Drawing.Common` to
+the csproj for `Bitmap`/`Graphics`. Validated the algorithm against synthetic images and the
+real reference set *before* touching the live game: exact region isolation on a synthetic pulse
+patch, and 39/39 correct self-identification across every reference image (including all 32
+real tiles) — see `.scratch/TileMatcherCheck` (not preserved, trivial to redo). Wired into
+`FFXIVMahjongBot.Pulse()` as a log-only diagnostic on the instant a call prompt appears
+(`TryIdentifyGlowingTile`), not dispatching on it yet, same verify-before-trusting discipline as
+everything else tonight. Deployed dev→live including `Assets/TileReference/*.png` (not
+historically part of the .cs-only deploy set — needs to be from now on whenever those change).
+
+**Real risk, unconfirmed**: `RectangleF` (via `AtkAddonControl.Bounds`) already works live, so
+`System.Drawing.Common` is very likely already loaded in RB's process — but RB compiles
+botbases from loose source with its own on-the-fly compiler, which has already been pickier
+than our own `dotnet build` about several things (see the top of this doc: no implicit usings,
+no collection-expression-to-interface, etc.). Whether it resolves `Bitmap`/`Graphics` the same
+way is unconfirmed until the next restart — first signal will be whether the bot compiles at
+all, before we even get to whether the screen-match itself works.
 
 ## Next-button dispatch downgraded: reproduces the reference project's "stuck state 32" (2026-09-08)
 
