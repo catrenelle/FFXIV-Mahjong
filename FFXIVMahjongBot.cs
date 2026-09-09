@@ -400,20 +400,29 @@ public sealed class FFXIVMahjongBot : BotBase
                 return null;
 
             using var crop = regionB.Clone(region, regionB.PixelFormat);
+            var result = _tileMatcher.MatchTile(crop);
 
             // Always dump the last detection for inspection — cheap, overwrites each time, and
             // has already been essential for debugging (caught the oversized-region bug this
-            // way 2026-09-08) without needing a separate manual console snippet.
+            // way 2026-09-08) without needing a separate manual console snippet. The marked copy
+            // draws the chosen window directly on the full panel so it's obvious at a glance
+            // whether the algorithm landed anywhere near a real tile.
             try
             {
                 Directory.CreateDirectory(DebugCaptureDirectory);
                 regionA.Save(Path.Combine(DebugCaptureDirectory, "auto_regionA.png"));
                 regionB.Save(Path.Combine(DebugCaptureDirectory, "auto_regionB.png"));
                 crop.Save(Path.Combine(DebugCaptureDirectory, "auto_crop.png"));
+                using var marked = new Bitmap(regionB);
+                using (var mg = Graphics.FromImage(marked))
+                using (var pen = new Pen(Color.Red, 2))
+                    mg.DrawRectangle(pen, region);
+                marked.Save(Path.Combine(DebugCaptureDirectory, "auto_regionB_marked.png"));
             }
             catch { /* best-effort diagnostic only */ }
 
-            return _tileMatcher.MatchTile(crop);
+            Logging.Write($"[FFXIVMahjong] screen-match region: {region} (window {windowWidth}x{windowHeight}, guess={result.Name} score={result.Score:F1})");
+            return result;
         }
         catch (Exception ex)
         {
