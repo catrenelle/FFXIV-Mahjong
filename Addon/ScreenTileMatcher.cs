@@ -105,8 +105,11 @@ public sealed class ScreenTileMatcher
 
     /// <summary>
     /// Bounding box of pixels that differ by more than <paramref name="threshold"/> between two
-    /// same-size captures, or null if nothing changed enough (e.g. the pulse animation happened
-    /// to be at the same brightness in both frames — caller should retry).
+    /// same-size captures, or null if nothing changed enough. Kept for the synthetic-image test
+    /// case (no ambient noise there) — <b>do not use against real captures</b>: live-caught
+    /// (2026-09-08) <c>PrintWindow</c> introduces low-level rendering noise spread across the
+    /// *entire* frame, not just at the real pulsing tile, which balloons a naive bounding box to
+    /// nearly the whole window. Use <see cref="FindMostChangedRegion"/> for real captures.
     /// </summary>
     public static Rectangle? FindChangedRegion(Bitmap a, Bitmap b, int threshold = 24)
     {
@@ -130,6 +133,55 @@ public sealed class ScreenTileMatcher
             }
         }
         return maxX < 0 ? null : Rectangle.FromLTRB(minX, minY, maxX + 1, maxY + 1);
+    }
+
+    /// <summary>
+    /// Finds the <paramref name="windowWidth"/>x<paramref name="windowHeight"/> sub-window with
+    /// the highest total pixel-difference between two same-size captures — robust to ambient
+    /// noise spread evenly across the whole frame (which a naive changed-pixel bounding box is
+    /// not: one noisy pixel far from the real pulse balloons the box to include everything in
+    /// between). The real pulsing tile concentrates a lot of change into a small area, so it
+    /// should score far higher than any noise-only window of the same size. O(W*H) after the
+    /// summed-area-table precompute, so window sliding itself is O(1) per position.
+    /// </summary>
+    public static Rectangle? FindMostChangedRegion(Bitmap a, Bitmap b, int windowWidth, int windowHeight)
+    {
+        if (a.Width != b.Width || a.Height != b.Height)
+            return null;
+        if (windowWidth <= 0 || windowHeight <= 0 || windowWidth > a.Width || windowHeight > a.Height)
+            return null;
+
+        int w = a.Width, h = a.Height;
+        var sat = new long[h + 1, w + 1];
+        for (int y = 0; y < h; y++)
+        {
+            for (int x = 0; x < w; x++)
+            {
+                Color pa = a.GetPixel(x, y);
+                Color pb = b.GetPixel(x, y);
+                int diff = Math.Abs(pa.R - pb.R) + Math.Abs(pa.G - pb.G) + Math.Abs(pa.B - pb.B);
+                sat[y + 1, x + 1] = diff + sat[y, x + 1] + sat[y + 1, x] - sat[y, x];
+            }
+        }
+
+        long WindowSum(int x0, int y0, int x1, int y1) =>
+            sat[y1, x1] - sat[y0, x1] - sat[y1, x0] + sat[y0, x0];
+
+        long bestSum = -1;
+        int bestX = 0, bestY = 0;
+        for (int y = 0; y <= h - windowHeight; y++)
+        {
+            for (int x = 0; x <= w - windowWidth; x++)
+            {
+                long sum = WindowSum(x, y, x + windowWidth, y + windowHeight);
+                if (sum <= bestSum)
+                    continue;
+                bestSum = sum;
+                bestX = x;
+                bestY = y;
+            }
+        }
+        return bestSum <= 0 ? null : new Rectangle(bestX, bestY, windowWidth, windowHeight);
     }
 
     /// <summary>Best-guess tile name for a cropped region, scored by mean per-pixel RGB difference against every reference (resized to match) — lower score is a better match.</summary>

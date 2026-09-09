@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Threading;
 using ff14bot.AClasses;
@@ -129,6 +130,9 @@ public sealed class FFXIVMahjongBot : BotBase
     /// copying there too whenever this changes.
     /// </summary>
     private const string TileReferenceDirectory = @"F:\Files\RebornBuddy\BotBases\FFXIVMahjong\Assets\TileReference";
+
+    /// <summary>Dev tree, not the live deploy — Claude can read these directly to debug a detection without a separate manual console snippet.</summary>
+    private const string DebugCaptureDirectory = @"C:\Projects\FFXIVMahjong\.scratch";
 
     private readonly ScreenTileMatcher? _tileMatcher = TryLoadTileMatcher();
 
@@ -383,11 +387,32 @@ public sealed class FFXIVMahjongBot : BotBase
                 return null;
             using var regionB = clientB.Clone(addonInClient, clientB.PixelFormat);
 
-            var changed = ScreenTileMatcher.FindChangedRegion(regionA, regionB);
-            if (changed is not { Width: >= 4, Height: >= 4 } tileRegion)
+            // Proportional to the addon panel itself (not a fixed pixel size) so this scales
+            // across different game resolutions/UI scales — tuned against a live 1008x560
+            // capture where a single tile looked roughly 1/16 of the panel width, 1/10 of the
+            // height. A naive bounding-box-of-all-changed-pixels approach was tried first and
+            // rejected live (2026-09-08): ambient PrintWindow rendering noise spread across the
+            // *whole* frame ballooned it to nearly the entire panel — see FindMostChangedRegion.
+            int windowWidth = Math.Max(20, addonInClient.Width / 16);
+            int windowHeight = Math.Max(20, addonInClient.Height / 10);
+            var tileRegion = ScreenTileMatcher.FindMostChangedRegion(regionA, regionB, windowWidth, windowHeight);
+            if (tileRegion is not { } region)
                 return null;
 
-            using var crop = regionB.Clone(tileRegion, regionB.PixelFormat);
+            using var crop = regionB.Clone(region, regionB.PixelFormat);
+
+            // Always dump the last detection for inspection — cheap, overwrites each time, and
+            // has already been essential for debugging (caught the oversized-region bug this
+            // way 2026-09-08) without needing a separate manual console snippet.
+            try
+            {
+                Directory.CreateDirectory(DebugCaptureDirectory);
+                regionA.Save(Path.Combine(DebugCaptureDirectory, "auto_regionA.png"));
+                regionB.Save(Path.Combine(DebugCaptureDirectory, "auto_regionB.png"));
+                crop.Save(Path.Combine(DebugCaptureDirectory, "auto_crop.png"));
+            }
+            catch { /* best-effort diagnostic only */ }
+
             return _tileMatcher.MatchTile(crop);
         }
         catch (Exception ex)
