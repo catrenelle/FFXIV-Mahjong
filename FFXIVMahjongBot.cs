@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Linq;
+using System.Threading;
 using ff14bot.AClasses;
 using ff14bot.Behavior;
 using ff14bot.Helpers;
@@ -121,6 +123,28 @@ public sealed class FFXIVMahjongBot : BotBase
     private EmjAddonReader.AtkValueSnapshot[]? _handResultFirstSeenSnapshot;
     private bool _handResultReadyDiffLogged;
 
+    /// <summary>
+    /// Deployed alongside the botbase's own source (see AGENTS/project memory on the one-way
+    /// dev→live copy) — Assets/ isn't part of the historical .cs-only deploy set, so it needs
+    /// copying there too whenever this changes.
+    /// </summary>
+    private const string TileReferenceDirectory = @"F:\Files\RebornBuddy\BotBases\FFXIVMahjong\Assets\TileReference";
+
+    private readonly ScreenTileMatcher? _tileMatcher = TryLoadTileMatcher();
+
+    private static ScreenTileMatcher? TryLoadTileMatcher()
+    {
+        try
+        {
+            return new ScreenTileMatcher(TileReferenceDirectory);
+        }
+        catch (Exception ex)
+        {
+            Logging.Write($"[FFXIVMahjong] ScreenTileMatcher failed to load reference images from {TileReferenceDirectory}: {ex.Message}");
+            return null;
+        }
+    }
+
     public override string Name => "FFXIV Mahjong";
     public override PulseFlags PulseFlags => PulseFlags.All;
     public override bool IsAutonomous => true;
@@ -168,6 +192,11 @@ public sealed class FFXIVMahjongBot : BotBase
             if (justAppeared)
             {
                 _callPromptDelayedDiffLogged = false;
+
+                var tileGuess = TryIdentifyGlowingTile(window);
+                Logging.Write(tileGuess is { } guess
+                    ? $"[FFXIVMahjong] screen-match guess: {guess.Name} (score={guess.Score:F1}, lower=better)"
+                    : "[FFXIVMahjong] screen-match: no confident region found");
 
                 if (_lastNormalAtkSnapshot is { } before)
                 {
@@ -316,6 +345,33 @@ public sealed class FFXIVMahjongBot : BotBase
         _dispatcher.Discard(window, slotIndex, _reader.ReadHandSlotRaw(window, slotIndex));
         _lastActedHandSignature = signature;
         _lastDispatchAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Captures the addon window twice, ~200ms apart, and diffs them to locate the pulsing
+    /// highlighted tile (see <see cref="ScreenTileMatcher"/>) — self-locating, no node IDs or
+    /// hardcoded offsets needed. Blocks Pulse() briefly, but only once per newly-seen prompt
+    /// (gated by the caller's `justAppeared` check), same tradeoff already accepted elsewhere
+    /// (e.g. the 3.5s hand-result stability wait).
+    /// </summary>
+    private (string Name, double Score)? TryIdentifyGlowingTile(AtkAddonControl window)
+    {
+        if (_tileMatcher is null)
+            return null;
+        if (window.Bounds is not { Width: > 0, Height: > 0 } boundsF)
+            return null;
+
+        var bounds = Rectangle.Round(boundsF);
+        using var captureA = ScreenTileMatcher.CaptureRegion(bounds);
+        Thread.Sleep(200);
+        using var captureB = ScreenTileMatcher.CaptureRegion(bounds);
+
+        var changed = ScreenTileMatcher.FindChangedRegion(captureA, captureB);
+        if (changed is not { Width: >= 4, Height: >= 4 } region)
+            return null;
+
+        using var crop = captureB.Clone(region, captureB.PixelFormat);
+        return _tileMatcher.MatchTile(crop);
     }
 
     /// <summary>Logs every AtkValues index that differs between two snapshots — used to catch what actually changed at a state transition instead of guessing from one dump in isolation.</summary>
