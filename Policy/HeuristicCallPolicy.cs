@@ -101,8 +101,8 @@ public sealed class HeuristicCallPolicy : ICallPolicy
         if (suits.Count <= 1)
             return true; // honitsu/chinitsu still reachable
 
-        if (!newMeld.Tiles.Any(t => t.IsTerminalOrHonor))
-            return true; // tanyao still reachable
+        if (allTiles.Count(t => t.IsTerminalOrHonor) <= 1)
+            return true; // tanyao still reachable (at most one terminal/honor left to discard away)
 
         return false;
     }

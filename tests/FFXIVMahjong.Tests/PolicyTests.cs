@@ -75,6 +75,23 @@ public class PolicyTests
     }
 
     [Fact]
+    public void CallPolicy_RefusesChiWhenExistingTilesElsewhereAlreadyKillTanyao()
+    {
+        // 4m4m 7m8m9m 3p4p 7p8p9p 3s5s7s — calling Chi(3p,4p) on a 5p discard forms a
+        // terminal-free new meld (3p4p5p) and does improve shanten, but the 9m/9p already
+        // sitting in the rest of the hand make tanyao unreachable regardless, and there's no
+        // yakuhai/honitsu/toitoi path either (Chi rules out toitoi outright). Regression test
+        // for a bug where the tanyao check only inspected the new meld's own tiles instead of
+        // the whole post-call hand, live-caught 2026-09-14.
+        List<Tile> tiles = [M(4), M(4), M(7), M(8), M(9), P(3), P(4), P(7), P(8), P(9), S(3), S(5), S(7)];
+        var hand = new Hand(tiles);
+        var policy = new HeuristicCallPolicy();
+
+        var chi = policy.ShouldCallChi(hand, P(5), WindTile.East, WindTile.East);
+        Assert.Null(chi);
+    }
+
+    [Fact]
     public void PushFoldPolicy_FoldsFarFromTenpaiAgainstRiichi()
     {
         var policy = new HeuristicPushFoldPolicy();
