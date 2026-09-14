@@ -101,39 +101,6 @@ public sealed class FFXIVMahjongBot : BotBase
     private static readonly bool AutoClickNext = false;
 
     /// <summary>
-    /// AtkValues snapshot from the most recent Pulse where no call prompt was active — kept
-    /// fresh every tick so that the instant a prompt appears, we can diff against a snapshot
-    /// from milliseconds earlier instead of guessing at a single dump in isolation. Tonight's
-    /// RE session got fooled twice by values that looked like a match but were actually stale
-    /// contents left over from a *previous* prompt (see docs/addon-capture-log.md) — a real
-    /// diff catches that automatically, since a stale value won't show up as "changed".
-    /// </summary>
-    private EmjAddonReader.AtkValueSnapshot[]? _lastNormalAtkSnapshot;
-
-    /// <summary>Same idea as <see cref="_lastNormalAtkSnapshot"/> but for the addon's raw struct memory — covers fields that never go through AtkValues at all (confirmed live 2026-09-08: a Chi's offered tile changed nothing in a 109-entry AtkValues diff, so it must live here instead).</summary>
-    private int[]? _lastNormalRawSnapshot;
-
-    /// <summary>Same idea again, but for the addon's actually-bound "Agent" backing structure (via <see cref="EmjAddonReader.DumpAgentEmjRawMemorySnapshot"/>, resolved per-window rather than by a guessed internal id) rather than the UI addon's own memory — tried after both AtkValues and the addon's raw struct memory came up completely clean on real diffs (2026-09-08).</summary>
-    private int[]? _lastNormalAgentSnapshot;
-    private bool _agentResolutionLogged;
-
-    /// <summary>
-    /// Snapshots taken the instant a call prompt first appears (not just the pre-prompt
-    /// baseline), kept so we can diff again a bit later — catches a field that gets written
-    /// asynchronously (e.g. a delayed network round-trip) rather than in the same tick the
-    /// prompt itself becomes visible, which the immediate justAppeared diff would miss.
-    /// </summary>
-    private EmjAddonReader.AtkValueSnapshot[]? _callPromptAppearedAtkSnapshot;
-    private int[]? _callPromptAppearedRawSnapshot;
-    private int[]? _callPromptAppearedAgentSnapshot;
-    private bool _callPromptDelayedDiffLogged;
-    private static readonly TimeSpan CallPromptDelayedDiffDelay = TimeSpan.FromSeconds(1.5);
-
-    /// <summary>Snapshot taken the instant state 29 (hand-result screen) first appears, so we can diff it against the snapshot right as <see cref="HandResultStabilityWindow"/> elapses — hunting for whatever flag flips when the Next button visibly becomes clickable (user-observed 2026-09-08).</summary>
-    private EmjAddonReader.AtkValueSnapshot[]? _handResultFirstSeenSnapshot;
-    private bool _handResultReadyDiffLogged;
-
-    /// <summary>
     /// Deployed alongside the botbase's own source (see AGENTS/project memory on the one-way
     /// dev→live copy) — Assets/ isn't part of the historical .cs-only deploy set, so it needs
     /// copying there too whenever this changes.
@@ -277,15 +244,6 @@ public sealed class FFXIVMahjongBot : BotBase
         _lastNextClickAttempt = DateTime.MinValue;
         _handResultFirstSeenAt = null;
         _lastDispatchAt = DateTime.MinValue;
-        _lastNormalAtkSnapshot = null;
-        _lastNormalRawSnapshot = null;
-        _lastNormalAgentSnapshot = null;
-        _callPromptAppearedAtkSnapshot = null;
-        _callPromptAppearedRawSnapshot = null;
-        _callPromptAppearedAgentSnapshot = null;
-        _callPromptDelayedDiffLogged = false;
-        _handResultFirstSeenSnapshot = null;
-        _handResultReadyDiffLogged = false;
     }
 
     public override void Pulse()
@@ -308,8 +266,6 @@ public sealed class FFXIVMahjongBot : BotBase
 
             if (justAppeared)
             {
-                _callPromptDelayedDiffLogged = false;
-
                 var tileGuess = TryIdentifyGlowingTile(window);
                 Logging.Write(tileGuess is { } guess
                     ? $"[FFXIVMahjong] screen-match guess: {guess.Name} (score={guess.Score:F1}, lower=better)"
@@ -360,42 +316,6 @@ public sealed class FFXIVMahjongBot : BotBase
                         Logging.Write($"[FFXIVMahjong] call recommendation: {recommendation} on {offeredTile} (hand: {string.Join(",", currentHand.Concealed)})");
                     }
                 }
-
-                if (_lastNormalAtkSnapshot is { } before)
-                {
-                    var after = _reader.DumpAtkValueSnapshot(window);
-                    LogAtkValueDiff("call-prompt appeared", before, after);
-                    _callPromptAppearedAtkSnapshot = after;
-                }
-                if (_lastNormalRawSnapshot is { } rawBefore)
-                {
-                    var rawAfter = _reader.DumpRawMemorySnapshot(window);
-                    LogRawMemoryDiff("call-prompt appeared (addon)", rawBefore, rawAfter);
-                    _callPromptAppearedRawSnapshot = rawAfter;
-                }
-                if (_lastNormalAgentSnapshot is { } agentBefore)
-                {
-                    var agentAfter = _reader.DumpAgentEmjRawMemorySnapshot(window);
-                    if (agentAfter is not null)
-                        LogRawMemoryDiff("call-prompt appeared (AgentEmj)", agentBefore, agentAfter);
-                    _callPromptAppearedAgentSnapshot = agentAfter;
-                }
-            }
-            else if (!_callPromptDelayedDiffLogged && DateTime.UtcNow - firstSeen >= CallPromptDelayedDiffDelay)
-            {
-                // Catches a field that gets written a moment after the prompt itself becomes
-                // visible (e.g. an async network round-trip) instead of in the very same tick.
-                _callPromptDelayedDiffLogged = true;
-                if (_callPromptAppearedAtkSnapshot is { } atkBase)
-                    LogAtkValueDiff("call-prompt +1.5s", atkBase, _reader.DumpAtkValueSnapshot(window));
-                if (_callPromptAppearedRawSnapshot is { } rawBase)
-                    LogRawMemoryDiff("call-prompt +1.5s (addon)", rawBase, _reader.DumpRawMemorySnapshot(window));
-                if (_callPromptAppearedAgentSnapshot is { } agentBase)
-                {
-                    var agentNow = _reader.DumpAgentEmjRawMemorySnapshot(window);
-                    if (agentNow is not null)
-                        LogRawMemoryDiff("call-prompt +1.5s (AgentEmj)", agentBase, agentNow);
-                }
             }
 
             if (DateTime.UtcNow - firstSeen < CallPromptBlockTimeout)
@@ -416,44 +336,16 @@ public sealed class FFXIVMahjongBot : BotBase
         else
         {
             _callPromptFirstSeenAt = null;
-            _callPromptAppearedAtkSnapshot = null;
-            _callPromptAppearedRawSnapshot = null;
-            _callPromptAppearedAgentSnapshot = null;
-            _callPromptDelayedDiffLogged = false;
-            _lastNormalAtkSnapshot = _reader.DumpAtkValueSnapshot(window);
-            _lastNormalRawSnapshot = _reader.DumpRawMemorySnapshot(window);
-            _lastNormalAgentSnapshot = _reader.DumpAgentEmjRawMemorySnapshot(window);
-            if (!_agentResolutionLogged)
-            {
-                _agentResolutionLogged = true;
-                Logging.Write(_lastNormalAgentSnapshot is null
-                    ? "[FFXIVMahjong] Window-bound AgentEmj did not resolve"
-                    : "[FFXIVMahjong] Window-bound AgentEmj resolved successfully, will diff it at the next call prompt");
-            }
         }
 
         int stateCode = _reader.ReadStateCode(window);
 
         if (stateCode == EmjOffsets.StateHandResultNext)
         {
-            bool justAppeared = _handResultFirstSeenAt is null;
             DateTime resultFirstSeen = _handResultFirstSeenAt ?? DateTime.UtcNow;
             _handResultFirstSeenAt = resultFirstSeen;
 
-            if (justAppeared)
-            {
-                _handResultFirstSeenSnapshot = _reader.DumpAtkValueSnapshot(window);
-                _handResultReadyDiffLogged = false;
-            }
-
             bool stable = DateTime.UtcNow - resultFirstSeen >= HandResultStabilityWindow;
-            if (stable && !_handResultReadyDiffLogged && _handResultFirstSeenSnapshot is { } beforeReady)
-            {
-                var afterReady = _reader.DumpAtkValueSnapshot(window);
-                LogAtkValueDiff("hand-result stability window elapsed", beforeReady, afterReady);
-                _handResultReadyDiffLogged = true;
-            }
-
             if (!stable)
                 return; // still settling — let the result-modal animation finish before clicking
 
@@ -468,8 +360,6 @@ public sealed class FFXIVMahjongBot : BotBase
             return;
         }
         _handResultFirstSeenAt = null;
-        _handResultFirstSeenSnapshot = null;
-        _handResultReadyDiffLogged = false;
 
         if (stateCode != EmjOffsets.StateOurTurnDiscard
             && stateCode != EmjOffsets.StatePostDrawOrCallDiscard
@@ -731,7 +621,7 @@ public sealed class FFXIVMahjongBot : BotBase
         {
             // The addon window (or its underlying memory) can go stale mid-capture if the
             // prompt closes/changes while we're mid-screenshot — fail safe rather than crash
-            // Pulse(), same as DumpAgentEmjRawMemorySnapshot's existing try/catch.
+            // Pulse() instead of throwing.
             Logging.Write($"[FFXIVMahjong] screen-match capture failed: {ex.Message}");
             return null;
         }
@@ -742,48 +632,6 @@ public sealed class FFXIVMahjongBot : BotBase
             firstFullFrame?.Dispose();
             lastFullFrame?.Dispose();
         }
-    }
-
-    /// <summary>Logs every AtkValues index that differs between two snapshots — used to catch what actually changed at a state transition instead of guessing from one dump in isolation.</summary>
-    private static void LogAtkValueDiff(string label, EmjAddonReader.AtkValueSnapshot[] before, EmjAddonReader.AtkValueSnapshot[] after)
-    {
-        Logging.Write($"[FFXIVMahjong] atk diff ({label}): before.Length={before.Length} after.Length={after.Length}");
-        int max = Math.Max(before.Length, after.Length);
-        for (int i = 0; i < max; i++)
-        {
-            var b = i < before.Length ? before[i] : default;
-            var a = i < after.Length ? after[i] : default;
-            if (b.Type != a.Type || b.Int != a.Int || b.Text != a.Text)
-                Logging.Write($"[FFXIVMahjong]   [{i}] {Describe(b)} -> {Describe(a)}");
-        }
-    }
-
-    private static string Describe(EmjAddonReader.AtkValueSnapshot v) =>
-        v.Text is not null ? $"{v.Type}:\"{v.Text}\"" : $"{v.Type}:{v.Int}";
-
-    /// <summary>Logs every raw-memory int32 that differs between two snapshots, byte-offset-addressed to line up with EmjOffsets constants. Annotates anything that plausibly decodes as a tile id (bare 0-33, or texture-offset) so a match doesn't need manual arithmetic to spot.</summary>
-    private static void LogRawMemoryDiff(string label, int[] before, int[] after)
-    {
-        Logging.Write($"[FFXIVMahjong] raw diff ({label}): before.Length={before.Length} after.Length={after.Length}");
-        int max = Math.Min(before.Length, after.Length);
-        for (int i = 0; i < max; i++)
-        {
-            if (before[i] == after[i])
-                continue;
-            int offset = i * 4;
-            string note = DecodeTileGuess(after[i]);
-            Logging.Write($"[FFXIVMahjong]   +0x{offset:X4} {before[i]} -> {after[i]}{note}");
-        }
-    }
-
-    private static string DecodeTileGuess(int raw)
-    {
-        if (raw is >= 0 and < Tile.KindCount)
-            return $" (bare tile id {raw} = {new Tile(raw)})";
-        int textureOffsetId = raw - EmjOffsets.TileTextureBase;
-        if (textureOffsetId is >= 0 and < Tile.KindCount)
-            return $" (texture-offset tile id {textureOffsetId} = {new Tile(textureOffsetId)})";
-        return "";
     }
 
     /// <summary>Maps a <see cref="ScreenTileMatcher.MatchTile"/> result name (the reference filename, position suffix already stripped) back to a <see cref="Tile"/> — e.g. "7p", "north", "green".</summary>
