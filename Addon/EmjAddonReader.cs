@@ -173,4 +173,25 @@ public sealed class EmjAddonReader
             return null; // fail safe rather than crash the bot's Pulse loop
         }
     }
+
+    /// <summary>
+    /// Identity of whatever agent <see cref="AtkAddonControl.TryFindAgentInterface"/> resolves
+    /// for this window — <c>AgentInterface.Id</c> was never actually surfaced by
+    /// <see cref="DumpAgentEmjRawMemorySnapshot"/> (only <c>.Pointer</c> and <c>.IsValid</c> were
+    /// read), so the "exhausted" 2026-09-08 offered-tile conclusion was never cross-checked
+    /// against an externally-observed agent id. Added 2026-09-14 to verify against a numeric id
+    /// the user found through an external tool, before trusting that prior negative result.
+    /// </summary>
+    public (int Id, IntPtr Pointer, IntPtr VTable)? TryDescribeResolvedAgent(AtkAddonControl window)
+    {
+        try
+        {
+            var agent = window.TryFindAgentInterface();
+            return agent is { IsValid: true } ? (agent.Id, agent.Pointer, agent.VTable) : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }

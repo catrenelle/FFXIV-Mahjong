@@ -180,6 +180,9 @@ public sealed class FFXIVMahjongBot : BotBase
                     case "ReadHand":
                         AppendBridgeHand(lines, window);
                         break;
+                    case "DumpAgentInfo":
+                        AppendBridgeAgentInfo(lines, window);
+                        break;
                     default:
                         success = false;
                         lines.Add($"error=unknown action '{action}'");
@@ -225,6 +228,21 @@ public sealed class FFXIVMahjongBot : BotBase
             var v = snapshot[i];
             lines.Add($"atk[{i}]={v.Type}:{v.Text ?? v.Int.ToString()}");
         }
+    }
+
+    /// <summary>One-off verification (2026-09-14): the "offered-tile hunt exhausted" conclusion from 2026-09-08 read <c>AgentInterface.Pointer</c> but never actually logged <c>.Id</c> — this reports what we're really resolving, to cross-check against an id the user found through an external tool before trusting that old negative result.</summary>
+    private void AppendBridgeAgentInfo(List<string> lines, AtkAddonControl window)
+    {
+        var info = _reader.TryDescribeResolvedAgent(window);
+        if (info is not { } agent)
+        {
+            lines.Add("agentResolved=false");
+            return;
+        }
+        lines.Add("agentResolved=true");
+        lines.Add($"agentId={agent.Id}");
+        lines.Add($"agentPointer={agent.Pointer:X}");
+        lines.Add($"agentVTable={agent.VTable:X}");
     }
 
     public override string Name => "FFXIV Mahjong";
