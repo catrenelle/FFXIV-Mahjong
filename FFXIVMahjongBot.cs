@@ -406,12 +406,19 @@ public sealed class FFXIVMahjongBot : BotBase
                 return; // never auto-discard a winning hand — leave it entirely to the human
             }
 
-            if (_riichiPolicy.ShouldDeclareRiichi(handForPolicy.WithDiscard(discard), _reader.ReadSelfScore(window)))
+            var afterDiscard = handForPolicy.WithDiscard(discard);
+            if (_riichiPolicy.ShouldDeclareRiichi(afterDiscard, _reader.ReadSelfScore(window)))
             {
                 if (signature != _lastRiichiLoggedSignature)
                 {
                     _lastRiichiLoggedSignature = signature;
-                    Logging.Write($"[FFXIVMahjong] RIICHI available (tenpai after discarding {discard}) — auto-discard paused, declare it yourself in-game if you want to riichi.");
+                    string waits = string.Join("/", Ukeire.UsefulTileIds(afterDiscard).Select(id => new Tile(id).ToString()));
+                    var doraIndicator = _reader.ReadDoraIndicator(window);
+                    var doraList = doraIndicator is { } d ? new List<Tile> { d } : new List<Tile>();
+                    string reason = Scorer.HasYakuWithoutRiichi(afterDiscard, WindTile.East, WindTile.East, doraList, _ruleSet)
+                        ? "hand already scores without declaring, so Damaten is a real option, but Riichi still adds guaranteed extra han and ura dora access"
+                        : "no yaku exists without declaring, so Riichi is the only way to enable a Ron win here (Tsumo would still work via Menzen Tsumo alone)";
+                    Logging.Write($"[FFXIVMahjong] RIICHI recommended (tenpai after discarding {discard}, waiting on {waits}) — {reason}. Auto-discard paused, declare it yourself in-game.");
                 }
                 return; // leave the discard (and the riichi decision) to the human
             }

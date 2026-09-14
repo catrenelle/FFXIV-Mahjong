@@ -136,6 +136,39 @@ public class ScorerTests
     }
 
     [Fact]
+    public void HasYakuWithoutRiichi_TrueWhenAWaitAlreadyScoresTanyaoOrPinfu()
+    {
+        // Live 2026-09-14 Riichi hand: 4m4m 678m 345p(incl. red 5) 78p 567s, waiting 6p/9p.
+        // Fully simple (no terminals/honors at all) — 6p completes Tanyao+Pinfu, 9p completes
+        // Pinfu alone (terminal wait kills Tanyao for that side but not Pinfu). Either way,
+        // damaten is a real option here, not just legal shape.
+        List<Tile> concealed =
+        [
+            M(4), M(4), M(6), M(7), M(8),
+            P(3), P(4), Tile.FromSuitRank(Suit.Pin, 5, isRedFive: true), P(7), P(8),
+            S(5), S(6), S(7),
+        ];
+        var hand = new Hand(concealed, new List<Meld>());
+
+        Assert.Equal(0, Shanten.Calculate(hand));
+        Assert.True(Scorer.HasYakuWithoutRiichi(hand, WindTile.East, WindTile.East, [], RuleSet));
+    }
+
+    [Fact]
+    public void HasYakuWithoutRiichi_FalseOnATerminalShanponWaitWithNoOtherYaku()
+    {
+        // 234m 567p 789s + 1m1m/9p9p shanpon wait. Shanpon (not ryanmen) rules out Pinfu, the
+        // terminals in both wait tiles rule out Tanyao, and there's no yakuhai/toitoi/honitsu
+        // path either — this hand can only ever win by Ron if Riichi (or some other declared
+        // yaku) is in play; Menzen Tsumo would still cover a self-draw, but Ron needs Riichi.
+        List<Tile> concealed = [M(1), M(1), M(2), M(3), M(4), P(5), P(6), P(7), P(9), P(9), S(7), S(8), S(9)];
+        var hand = new Hand(concealed, new List<Meld>());
+
+        Assert.Equal(0, Shanten.Calculate(hand));
+        Assert.False(Scorer.HasYakuWithoutRiichi(hand, WindTile.East, WindTile.East, [], RuleSet));
+    }
+
+    [Fact]
     public void ClosedTsumo_ScoresViaMenzenTsumoRegardlessOfWhichTileIsMarkedAsWinning()
     {
         // FFXIVMahjongBot's live TryScoreClosedTsumo doesn't know which specific tile was just

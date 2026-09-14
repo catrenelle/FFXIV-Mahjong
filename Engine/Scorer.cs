@@ -55,6 +55,44 @@ public static class Scorer
         return best;
     }
 
+    /// <summary>
+    /// True if at least one of this tenpai hand's waits (per <see cref="Ukeire"/>) would already
+    /// score a legal Ron without declaring Riichi — i.e. damaten (staying hidden on an
+    /// already-valid hand) is a real option here, not just theoretically legal shape. IsTsumo
+    /// and IsRiichi are both false in the checked context on purpose: this asks "would this hand
+    /// have a yaku if it won by Ron with no declaration," the strictest case (Menzen Tsumo would
+    /// trivially cover any closed self-draw regardless, so checking that case wouldn't tell us
+    /// anything useful about whether staying hidden is viable).
+    /// </summary>
+    public static bool HasYakuWithoutRiichi(
+        Hand tenpaiHand, WindTile seatWind, WindTile roundWind, IReadOnlyList<Tile> doraIndicators, IRuleSet ruleSet)
+    {
+        foreach (int waitId in Ukeire.UsefulTileIds(tenpaiHand))
+        {
+            var winningTile = new Tile(waitId);
+            var completedHand = new Hand(new List<Tile>(tenpaiHand.Concealed) { winningTile }, tenpaiHand.Melds);
+            var context = new WinContext(
+                SeatWind: seatWind,
+                RoundWind: roundWind,
+                WinningTile: winningTile,
+                IsTsumo: false,
+                IsRiichi: false,
+                IsDoubleRiichi: false,
+                IsIppatsu: false,
+                IsHaitei: false,
+                IsHoutei: false,
+                IsChankan: false,
+                IsRinshan: false,
+                DoraIndicators: doraIndicators,
+                UraDoraIndicators: new List<Tile>());
+
+            if (Score(completedHand, context, ruleSet) is not null)
+                return true;
+        }
+
+        return false;
+    }
+
     private static int DoraCount(Hand hand, IEnumerable<Tile> doraTiles)
     {
         var doraIds = doraTiles.Select(t => t.Id).ToHashSet();
