@@ -10,7 +10,9 @@ using ff14bot.Helpers;
 using ff14bot.Managers;
 using FFXIVMahjong.Addon;
 using FFXIVMahjong.Core;
+using FFXIVMahjong.Engine;
 using FFXIVMahjong.Policy;
+using FFXIVMahjong.Rules;
 using TreeSharp;
 
 namespace FFXIVMahjong;
@@ -31,8 +33,14 @@ public sealed class FFXIVMahjongBot : BotBase
     private readonly EmjActionDispatcher _dispatcher = new();
     private readonly IDiscardPolicy _discardPolicy = new EfficiencyDiscardPolicy();
     private readonly ICallPolicy _callPolicy = new HeuristicCallPolicy();
+    private readonly IRiichiPolicy _riichiPolicy = new StandardRiichiPolicy();
+    private readonly IRuleSet _ruleSet = new DomanRuleSet();
 
     private string _lastActedHandSignature = "";
+
+    /// <summary>Hand signature we last logged a TSUMO/RIICHI pause for — logs once per hand, not every Pulse tick, while auto-discard stays paused on repeat ticks regardless.</summary>
+    private string? _lastTsumoLoggedSignature;
+    private string? _lastRiichiLoggedSignature;
     private DateTime _lastNextClickAttempt = DateTime.MinValue;
     private static readonly TimeSpan NextClickRetryInterval = TimeSpan.FromSeconds(1);
 
@@ -489,10 +497,39 @@ public sealed class FFXIVMahjongBot : BotBase
         if (signature == _lastActedHandSignature)
             return; // already dispatched for this exact hand — waiting for the game to catch up
 
+        var discard = _discardPolicy.ChooseDiscard(handForPolicy);
+
+        // Win/riichi gating only applies to a genuinely closed hand (meldCount == 0): the
+        // placeholder melds built above are the right *count* for shanten/discard purposes (see
+        // the comment above PlaceholderMelds) but the wrong *tiles*, and Scorer needs real tile
+        // identities to compute yaku correctly. An open hand just falls through to the normal
+        // auto-discard flow below, same as before this feature existed.
+        if (meldCount == 0)
+        {
+            if (TryScoreClosedTsumo(handForPolicy, window) is { } tsumoScore)
+            {
+                if (signature != _lastTsumoLoggedSignature)
+                {
+                    _lastTsumoLoggedSignature = signature;
+                    Logging.Write($"[FFXIVMahjong] TSUMO available! {tsumoScore.TotalHan} han / {tsumoScore.Points} points ({string.Join(", ", tsumoScore.Yaku.Select(y => y.Name))}) — auto-discard paused, declare it yourself in-game.");
+                }
+                return; // never auto-discard a winning hand — leave it entirely to the human
+            }
+
+            if (_riichiPolicy.ShouldDeclareRiichi(handForPolicy.WithDiscard(discard), _reader.ReadSelfScore(window)))
+            {
+                if (signature != _lastRiichiLoggedSignature)
+                {
+                    _lastRiichiLoggedSignature = signature;
+                    Logging.Write($"[FFXIVMahjong] RIICHI available (tenpai after discarding {discard}) — auto-discard paused, declare it yourself in-game if you want to riichi.");
+                }
+                return; // leave the discard (and the riichi decision) to the human
+            }
+        }
+
         if (DateTime.UtcNow - _lastDispatchAt < MinInterActionGap)
             return;
 
-        var discard = _discardPolicy.ChooseDiscard(handForPolicy);
         int slotIndex = FindSlotForTile(window, discard);
         if (slotIndex < 0)
             return;
@@ -500,6 +537,41 @@ public sealed class FFXIVMahjongBot : BotBase
         _dispatcher.Discard(window, slotIndex, _reader.ReadHandSlotRaw(window, slotIndex));
         _lastActedHandSignature = signature;
         _lastDispatchAt = DateTime.UtcNow;
+    }
+
+    /// <summary>
+    /// Returns a real score (not just a structural shanten==-1 check) if this closed 14-tile
+    /// hand can legally Tsumo right now — i.e. Scorer finds at least one yaku, per the Doman
+    /// ruleset's "no yaku, no win" requirement. Seat/round wind use the same East/East
+    /// placeholder as the call-recommendation path above (not read from the addon yet); this
+    /// only affects the yakuhai/dealer nuance, and since <c>MenzenTsumoRule</c> alone guarantees
+    /// at least 1 han for any closed self-draw regardless of which tile is treated as the
+    /// winning one, WinningTile is picked arbitrarily (only Pinfu's ryanmen-wait check cares
+    /// about it, and it isn't the only path to a valid score here). Log-only informational use —
+    /// not accurate enough for a real score submission (no riichi/ippatsu/ura-dora tracking).
+    /// </summary>
+    private ScoreResult? TryScoreClosedTsumo(Hand hand, AtkAddonControl window)
+    {
+        if (Shanten.Calculate(hand) != -1)
+            return null;
+
+        var doraIndicator = _reader.ReadDoraIndicator(window);
+        var context = new WinContext(
+            SeatWind: WindTile.East,
+            RoundWind: WindTile.East,
+            WinningTile: hand.Concealed[0],
+            IsTsumo: true,
+            IsRiichi: false,
+            IsDoubleRiichi: false,
+            IsIppatsu: false,
+            IsHaitei: false,
+            IsHoutei: false,
+            IsChankan: false,
+            IsRinshan: false,
+            DoraIndicators: doraIndicator is { } d ? new List<Tile> { d } : new List<Tile>(),
+            UraDoraIndicators: new List<Tile>());
+
+        return Scorer.Score(hand, context, _ruleSet);
     }
 
     private const int ScreenMatchFrameCount = 5;

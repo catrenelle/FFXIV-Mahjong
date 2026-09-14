@@ -136,6 +136,26 @@ public class ScorerTests
     }
 
     [Fact]
+    public void ClosedTsumo_ScoresViaMenzenTsumoRegardlessOfWhichTileIsMarkedAsWinning()
+    {
+        // FFXIVMahjongBot's live TryScoreClosedTsumo doesn't know which specific tile was just
+        // drawn (only the addon's discard-side reader is confirmed live), so it picks an
+        // arbitrary tile from the hand as WinningTile. This locks in the assumption that makes
+        // that safe: Menzen Tsumo alone guarantees a valid score for any closed self-draw no
+        // matter which tile gets marked as the winning one.
+        List<Tile> concealed = [M(1), M(2), M(3), P(4), P(5), P(6), S(7), S(8), S(9), Dragon(1), Dragon(1), M(9), M(9)];
+        var hand = new Hand([.. concealed, Dragon(1)]);
+
+        var resultA = Scorer.Score(hand, Context(hand.Concealed[0], tsumo: true), RuleSet);
+        var resultB = Scorer.Score(hand, Context(hand.Concealed[^1], tsumo: true), RuleSet);
+
+        Assert.NotNull(resultA);
+        Assert.NotNull(resultB);
+        Assert.Contains(resultA!.Yaku, y => y.Name == "Menzen Tsumo");
+        Assert.Contains(resultB!.Yaku, y => y.Name == "Menzen Tsumo");
+    }
+
+    [Fact]
     public void Dora_AddsHanOnTopOfBaseYaku()
     {
         List<Tile> concealed = [M(2), M(3), P(4), P(5), P(6), S(6), S(7), S(8), P(5), P(5), S(2), S(3), S(4)];
