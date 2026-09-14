@@ -14,6 +14,7 @@ using FFXIVMahjong.Engine;
 using FFXIVMahjong.Policy;
 using FFXIVMahjong.Rules;
 using TreeSharp;
+using RBCore = ff14bot.Core; // "Core" alone collides with our own FFXIVMahjong.Core namespace
 
 namespace FFXIVMahjong;
 
@@ -144,13 +145,20 @@ public sealed class FFXIVMahjongBot : BotBase
             return;
 
         string action = "";
+        var args = new Dictionary<string, string>();
         try
         {
             foreach (var line in File.ReadAllLines(commandPath))
             {
                 int eq = line.IndexOf('=');
-                if (eq > 0 && line[..eq].Trim() == "action")
-                    action = line[(eq + 1)..].Trim();
+                if (eq <= 0)
+                    continue;
+                string key = line[..eq].Trim();
+                string value = line[(eq + 1)..].Trim();
+                if (key == "action")
+                    action = value;
+                else
+                    args[key] = value;
             }
         }
         finally
@@ -182,6 +190,27 @@ public sealed class FFXIVMahjongBot : BotBase
                         break;
                     case "DumpAgentInfo":
                         AppendBridgeAgentInfo(lines, window);
+                        break;
+                    case "DumpRawMemory":
+                        AppendBridgeRawMemory(lines, window);
+                        break;
+                    case "DumpAgentRawMemory":
+                        AppendBridgeAgentRawMemory(lines, window);
+                        break;
+                    case "ListAgents":
+                        AppendBridgeAgentList(lines, window);
+                        break;
+                    case "ListWindowAgents":
+                        AppendBridgeWindowAgentList(lines);
+                        break;
+                    case "DumpAgentChecksums":
+                        AppendBridgeAgentChecksums(lines, args);
+                        break;
+                    case "DumpAgentsRaw":
+                        AppendBridgeAgentsRaw(lines, args);
+                        break;
+                    case "SearchAgentsForValue":
+                        AppendBridgeAgentValueSearch(lines, args);
                         break;
                     default:
                         success = false;
@@ -228,6 +257,297 @@ public sealed class FFXIVMahjongBot : BotBase
             var v = snapshot[i];
             lines.Add($"atk[{i}]={v.Type}:{v.Text ?? v.Int.ToString()}");
         }
+    }
+
+    /// <summary>
+    /// Full raw-memory dump (the addon's own ~0x3000-byte struct, not AtkValues), annotated the
+    /// same way the old auto-logging (removed this session, see <see cref="DecodeTileGuess"/>
+    /// history) used to: flags anything that plausibly decodes as a tile id, bare 0-33 or
+    /// texture-offset. Added 2026-09-14 to hunt for opponent discard-pile tile arrays — pull two
+    /// of these a discard apart and diff offline to look for a value that changed by exactly one
+    /// new tile id, the same methodology that found the self-hand array and score offsets.
+    /// </summary>
+    private void AppendBridgeRawMemory(List<string> lines, AtkAddonControl window)
+    {
+        var raw = _reader.DumpRawMemorySnapshot(window);
+        for (int i = 0; i < raw.Length; i++)
+        {
+            int offset = i * 4;
+            string note = DecodeTileGuess(raw[i]);
+            lines.Add($"raw[0x{offset:X4}]={raw[i]}{note}");
+        }
+    }
+
+    /// <summary>
+    /// Same idea as <see cref="AppendBridgeRawMemory"/> but for the resolved AgentEmj structure
+    /// (game-logic backing store, not the UI addon's own struct) — added 2026-09-14 because the
+    /// only prior AgentEmj testing (2026-09-08) was narrowly scoped to short before/after windows
+    /// around a single call prompt for the offered-tile hunt, never a broad multi-round diff like
+    /// the one that found the discard-count bytes in the window struct. Melds/piles are
+    /// persistent game state, not transient UI flicker, so the agent (not the window) is the more
+    /// likely home for them if they're readable at all.
+    /// </summary>
+    private void AppendBridgeAgentRawMemory(List<string> lines, AtkAddonControl window)
+    {
+        var raw = _reader.DumpAgentEmjRawMemorySnapshot(window);
+        if (raw is null)
+        {
+            lines.Add("agentResolved=false");
+            return;
+        }
+        for (int i = 0; i < raw.Length; i++)
+        {
+            int offset = i * 4;
+            string note = DecodeTileGuess(raw[i]);
+            lines.Add($"agentRaw[0x{offset:X4}]={raw[i]}{note}");
+        }
+    }
+
+    /// <summary>
+    /// Enumerates every currently-active agent (not just the one bound to the Emj window) —
+    /// added 2026-09-14 after <see cref="AppendBridgeAgentRawMemory"/> showed the resolved agent
+    /// (id 328) has zero per-round mutable state at all, meaning <c>TryFindAgentInterface()</c>
+    /// may simply be resolving the wrong agent for live game data (e.g. a settings/UI-toggle
+    /// agent rather than the actual mahjong game-logic one). First attempt used
+    /// <c>FindAgentIdByVtable</c>/<c>GetAgentInterfaceById</c> per the documented lookup path, but
+    /// that resolved id=-1 (with an identical garbage pointer) for all 509 live vtables — it's
+    /// evidently only wired up for RB's own known/registered agent types, useless for an obscure
+    /// addon like Doman Mahjong's. Pivoted to reading <c>RealAgentVtables</c>/<c>AgentPointers</c>
+    /// directly as parallel index-aligned lists instead, which sidesteps the broken id lookup
+    /// entirely — we only need a pointer to read memory from, not a resolved id. Also reports
+    /// which list index matches our already-confirmed agent 328's known
+    /// vtable/pointer (see <see cref="AppendBridgeAgentInfo"/>), to validate the index-pairing
+    /// assumption against known-good ground truth before trusting any of the other entries.
+    /// </summary>
+    private void AppendBridgeAgentList(List<string> lines, AtkAddonControl window)
+    {
+        try
+        {
+            var vtables = AgentModule.RealAgentVtables;
+            var pointers = AgentModule.AgentPointers;
+            lines.Add($"vtableCount={vtables.Count} pointerCount={pointers.Count}");
+
+            var known = _reader.TryDescribeResolvedAgent(window);
+            if (known is { } k)
+            {
+                int idx = vtables.FindIndex(v => v == k.VTable);
+                lines.Add($"knownAgent id={k.Id} vtable={k.VTable:X} pointer={k.Pointer:X} foundAtIndex={idx}"
+                    + (idx >= 0 && idx < pointers.Count ? $" pairedPointerAtIndex={pointers[idx]:X} pairingMatches={pointers[idx] == k.Pointer}" : ""));
+            }
+
+            int count = Math.Min(vtables.Count, pointers.Count);
+            for (int i = 0; i < count; i++)
+                lines.Add($"agent[{i}] vtable={vtables[i]:X} pointer={pointers[i]:X}");
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"agentListError={ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Enumerates every currently-*visible* addon window and whatever agent each one resolves
+    /// to via <c>TryFindAgentInterface()</c> — a much smaller, more relevant set than all 509
+    /// live agents (<see cref="AppendBridgeAgentList"/>), most of which are presumably dormant/
+    /// unrelated background systems. If the actual mahjong game-state agent is bound to some
+    /// *other* currently-visible window (not necessarily "Emj" itself), this is how we'd spot it
+    /// without guessing an index range to brute-force. <c>AtkAddonControl</c> doesn't expose a
+    /// name string via the managed API, so windows are only identified by pointer/bounds here —
+    /// cross-reference against <see cref="EmjAddonReader.TryGetWindow"/>'s own pointer to at
+    /// least confirm which entry is the already-known "Emj" window.
+    /// </summary>
+    private void AppendBridgeWindowAgentList(List<string> lines)
+    {
+        try
+        {
+            RaptureAtkUnitManager.Update();
+            int total = 0, visible = 0, withAgent = 0;
+            foreach (var control in RaptureAtkUnitManager.Controls)
+            {
+                total++;
+                if (control is not { IsVisible: true })
+                    continue;
+                visible++;
+                AgentInterface? agent;
+                try
+                {
+                    agent = control.TryFindAgentInterface();
+                }
+                catch
+                {
+                    agent = null;
+                }
+                if (agent is not { IsValid: true })
+                    continue;
+                withAgent++;
+                lines.Add($"window pointer={control.Pointer:X} bounds={control.Bounds} -> agentPointer={agent.Pointer:X} agentVTable={agent.VTable:X}");
+            }
+            lines.Add($"totalWindows={total} visibleWindows={visible} visibleWithResolvedAgent={withAgent}");
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"windowAgentListError={ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Cheap per-agent fingerprint for a range of agent indices (default 300-360, near our
+    /// known-good agent 328) — a rolling hash of each agent's raw memory rather than a full dump,
+    /// so two of these taken a real game-state change apart can be diffed to find which few
+    /// agents (if any) actually mutated, before spending a full <see cref="AppendBridgeAgentList"/>-
+    /// style dump on just those candidates. Added 2026-09-14 after both the bound-window agent
+    /// (328, zero mutation) and the visible-window-agent enumeration (no distinct mahjong-data
+    /// window) came up empty — this is the next cheapest way to search the remaining ~500 mostly-
+    /// dormant agents without an enormous dump. Pass <c>start=</c>/<c>end=</c>/<c>size=</c> (byte
+    /// count per agent, default 0x800) command-file args to adjust the range.
+    /// </summary>
+    private void AppendBridgeAgentChecksums(List<string> lines, Dictionary<string, string> args)
+    {
+        try
+        {
+            var pointers = AgentModule.AgentPointers;
+            int start = args.TryGetValue("start", out var s) ? int.Parse(s) : 300;
+            int end = args.TryGetValue("end", out var e) ? int.Parse(e) : 360;
+            int sizeBytes = args.TryGetValue("size", out var sz) ? int.Parse(sz) : 0x800;
+            end = Math.Min(end, pointers.Count - 1);
+
+            for (int i = start; i <= end; i++)
+            {
+                if (pointers[i] == IntPtr.Zero)
+                {
+                    lines.Add($"agent[{i}] pointer=0 checksum=0");
+                    continue;
+                }
+                try
+                {
+                    var raw = RBCore.Memory.ReadArray<int>(pointers[i], sizeBytes / 4);
+                    long checksum = 0;
+                    foreach (int v in raw)
+                        checksum = unchecked(checksum * 31 + v);
+                    lines.Add($"agent[{i}] pointer={pointers[i]:X} checksum={checksum:X}");
+                }
+                catch (Exception ex)
+                {
+                    lines.Add($"agent[{i}] pointer={pointers[i]:X} error={ex.Message}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"agentChecksumError={ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Full annotated raw-memory dump for a specific, small list of agent indices (comma-
+    /// separated <c>indices=</c> arg) rather than a whole range — the natural follow-up once
+    /// <see cref="AppendBridgeAgentChecksums"/> narrows ~500 dormant agents down to a handful
+    /// that actually mutated across a real game-state change. <c>size=</c> arg controls bytes
+    /// read per agent (default 0x800, matching the checksum default so offsets line up).
+    /// </summary>
+    private void AppendBridgeAgentsRaw(List<string> lines, Dictionary<string, string> args)
+    {
+        try
+        {
+            var pointers = AgentModule.AgentPointers;
+            int sizeBytes = args.TryGetValue("size", out var sz) ? int.Parse(sz) : 0x800;
+            var indices = (args.TryGetValue("indices", out var idx) ? idx : "")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(int.Parse);
+
+            foreach (int i in indices)
+            {
+                if (i < 0 || i >= pointers.Count || pointers[i] == IntPtr.Zero)
+                {
+                    lines.Add($"agent[{i}] unavailable");
+                    continue;
+                }
+                try
+                {
+                    var raw = RBCore.Memory.ReadArray<int>(pointers[i], sizeBytes / 4);
+                    for (int j = 0; j < raw.Length; j++)
+                    {
+                        int offset = j * 4;
+                        string note = DecodeTileGuess(raw[j]);
+                        lines.Add($"agent[{i}][0x{offset:X4}]={raw[j]}{note}");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    lines.Add($"agent[{i}] error={ex.Message}");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"agentsRawError={ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Exact-value search across every currently-active agent (all ~509, not a guessed range —
+    /// an exact int32 match is cheap and precise enough that there's no reason to narrow it).
+    /// Far stronger than <see cref="DecodeTileGuess"/>'s range heuristic: given a *specific*
+    /// known real tile, its exact encoded value(s) (bare id via <c>values=</c>, or precomputed
+    /// texture-offset/aka-dora candidates the caller works out from <see cref="EmjAddonReader.EncodeTileRaw"/>)
+    /// either are or aren't present somewhere in memory — no false positives from coincidental
+    /// small integers, no reliance on only the two encodings we already know about if the caller
+    /// passes other candidate values to try. <c>values=</c> is a comma-separated list of int32s
+    /// (decimal or 0x-prefixed hex); <c>size=</c> controls bytes scanned per agent (default
+    /// 0x800).
+    /// </summary>
+    private void AppendBridgeAgentValueSearch(List<string> lines, Dictionary<string, string> args)
+    {
+        try
+        {
+            var pointers = AgentModule.AgentPointers;
+            int sizeBytes = args.TryGetValue("size", out var sz) ? int.Parse(sz) : 0x800;
+            var targets = (args.TryGetValue("values", out var v) ? v : "")
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(t => t.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+                    ? Convert.ToInt32(t, 16)
+                    : int.Parse(t))
+                .ToHashSet();
+
+            lines.Add($"searching {pointers.Count} agents, {sizeBytes} bytes each, for values: {string.Join(",", targets)}");
+            int hits = 0;
+            for (int i = 0; i < pointers.Count; i++)
+            {
+                if (pointers[i] == IntPtr.Zero)
+                    continue;
+                int[] raw;
+                try
+                {
+                    raw = RBCore.Memory.ReadArray<int>(pointers[i], sizeBytes / 4);
+                }
+                catch
+                {
+                    continue; // unreadable region — skip, same as the checksum/raw dump paths
+                }
+                for (int j = 0; j < raw.Length; j++)
+                {
+                    if (!targets.Contains(raw[j]))
+                        continue;
+                    hits++;
+                    lines.Add($"MATCH agent[{i}] pointer={pointers[i]:X} offset=0x{j * 4:X4} value={raw[j]}");
+                }
+            }
+            lines.Add($"totalMatches={hits}");
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"agentSearchError={ex.Message}");
+        }
+    }
+
+    private static string DecodeTileGuess(int raw)
+    {
+        if (raw is >= 0 and < Tile.KindCount)
+            return $" (bare tile id {raw} = {new Tile(raw)})";
+        int textureOffsetId = raw - EmjOffsets.TileTextureBase;
+        if (textureOffsetId is >= 0 and < Tile.KindCount)
+            return $" (texture-offset tile id {textureOffsetId} = {new Tile(textureOffsetId)})";
+        return "";
     }
 
     /// <summary>One-off verification (2026-09-14): the "offered-tile hunt exhausted" conclusion from 2026-09-08 read <c>AgentInterface.Pointer</c> but never actually logged <c>.Id</c> — this reports what we're really resolving, to cross-check against an id the user found through an external tool before trusting that old negative result.</summary>
