@@ -150,6 +150,108 @@ public sealed class FFXIVMahjongBot : BotBase
         }
     }
 
+    /// <summary>
+    /// Read-only diagnostic bridge to Claude: drop a command file in <see cref="DebugCaptureDirectory"/>
+    /// (same dev-tree scratch folder the screen-match debug captures already write to, already
+    /// directly readable without a human relaying RebornConsole output) and this reads it back
+    /// out as a response file, once per Pulse tick. Deliberately read-only — no dispatch actions
+    /// here. The reference project's own history has three separate incidents where a
+    /// speculative *write* opcode corrupted the game into an unrecoverable state (see the
+    /// dispatch-protocol hypotheses section of docs/addon-capture-log.md); a read-only bridge
+    /// carries none of that risk, since the worst case is failing to answer, not acting wrongly.
+    /// One-shot: the command file is deleted immediately after being read (before dispatch), so
+    /// a stale command left over from a previous session is never silently reprocessed.
+    /// </summary>
+    private void ProcessClaudeBridgeCommand()
+    {
+        string commandPath = Path.Combine(DebugCaptureDirectory, "claude_command.txt");
+        if (!File.Exists(commandPath))
+            return;
+
+        string action = "";
+        try
+        {
+            foreach (var line in File.ReadAllLines(commandPath))
+            {
+                int eq = line.IndexOf('=');
+                if (eq > 0 && line[..eq].Trim() == "action")
+                    action = line[(eq + 1)..].Trim();
+            }
+        }
+        finally
+        {
+            File.Delete(commandPath); // one-shot regardless of whether parsing/dispatch below succeeds
+        }
+
+        var lines = new List<string> { $"action={action}" };
+        bool success = true;
+        try
+        {
+            if (!_reader.TryGetWindow(out AtkAddonControl window))
+            {
+                lines.Add("windowFound=false");
+            }
+            else
+            {
+                lines.Add("windowFound=true");
+                switch (action)
+                {
+                    case "DumpAll":
+                        AppendBridgeSummary(lines, window);
+                        break;
+                    case "DumpAtkValues":
+                        AppendBridgeAtkValues(lines, window);
+                        break;
+                    case "ReadHand":
+                        AppendBridgeHand(lines, window);
+                        break;
+                    default:
+                        success = false;
+                        lines.Add($"error=unknown action '{action}'");
+                        break;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            success = false;
+            lines.Add($"error={ex.Message}");
+        }
+        lines.Insert(0, $"success={success}");
+
+        File.WriteAllLines(Path.Combine(DebugCaptureDirectory, "claude_response.txt"), lines);
+    }
+
+    private void AppendBridgeHand(List<string> lines, AtkAddonControl window)
+    {
+        var hand = _reader.ReadSelfHand(window);
+        lines.Add($"hand={string.Join(",", hand.Concealed)}");
+    }
+
+    private void AppendBridgeSummary(List<string> lines, AtkAddonControl window)
+    {
+        lines.Add($"stateCode={_reader.ReadStateCode(window)}");
+        lines.Add($"callPromptActive={_reader.IsCallPromptLikelyActive(window)}");
+        AppendBridgeHand(lines, window);
+        lines.Add($"selfScore={_reader.ReadSelfScore(window)}");
+        lines.Add($"shimochaScore={_reader.ReadShimochaScore(window)}");
+        lines.Add($"toimenScore={_reader.ReadToimenScore(window)}");
+        lines.Add($"kamichaScore={_reader.ReadKamichaScore(window)}");
+        lines.Add($"selfDiscardCount={_reader.ReadSelfDiscardCount(window)}");
+        var dora = _reader.ReadDoraIndicator(window);
+        lines.Add($"doraIndicator={(dora.HasValue ? dora.Value.ToString() : "(none)")}");
+    }
+
+    private void AppendBridgeAtkValues(List<string> lines, AtkAddonControl window)
+    {
+        var snapshot = _reader.DumpAtkValueSnapshot(window);
+        for (int i = 0; i < snapshot.Length; i++)
+        {
+            var v = snapshot[i];
+            lines.Add($"atk[{i}]={v.Type}:{v.Text ?? v.Int.ToString()}");
+        }
+    }
+
     public override string Name => "FFXIV Mahjong";
     public override PulseFlags PulseFlags => PulseFlags.All;
     public override bool IsAutonomous => true;
@@ -180,6 +282,8 @@ public sealed class FFXIVMahjongBot : BotBase
 
     public override void Pulse()
     {
+        ProcessClaudeBridgeCommand();
+
         if (!_reader.TryGetWindow(out AtkAddonControl window))
             return;
 
