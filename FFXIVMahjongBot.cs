@@ -170,7 +170,16 @@ public sealed class FFXIVMahjongBot : BotBase
         bool success = true;
         try
         {
-            if (!_reader.TryGetWindow(out AtkAddonControl window))
+            if (action == "TryWindowByName")
+            {
+                // Doesn't need "Emj" itself to be resolvable — the whole point is checking for a
+                // *different* window name when Emj isn't found (2026-09-15: switching the in-game
+                // "High Resolution" layout setting made "Emj" stop resolving entirely, and
+                // EmjOffsets.WindowName's own doc comment already flags an unverified "EmjL"
+                // variant that was never actually tested against a real client).
+                AppendBridgeTryWindowByName(lines, args);
+            }
+            else if (!_reader.TryGetWindow(out AtkAddonControl window))
             {
                 lines.Add("windowFound=false");
             }
@@ -211,6 +220,15 @@ public sealed class FFXIVMahjongBot : BotBase
                         break;
                     case "SearchAgentsForValue":
                         AppendBridgeAgentValueSearch(lines, args);
+                        break;
+                    case "FindPattern":
+                        AppendBridgeFindPattern(lines, args);
+                        break;
+                    case "DumpBytesAtAddress":
+                        AppendBridgeBytesAtAddress(lines, args);
+                        break;
+                    case "ScanAgentsForPointerAt":
+                        AppendBridgeScanAgentsForPointerAt(lines, args);
                         break;
                     default:
                         success = false;
@@ -537,6 +555,177 @@ public sealed class FFXIVMahjongBot : BotBase
         catch (Exception ex)
         {
             lines.Add($"agentSearchError={ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Checks whether a specific addon name resolves to a visible window right now, independent
+    /// of "Emj" itself — <c>RaptureAtkUnitManager.GetWindowByName</c> takes a name directly, no
+    /// enumeration needed. <c>name=</c> command-file arg (default "EmjL" if omitted).
+    /// </summary>
+    private void AppendBridgeTryWindowByName(List<string> lines, Dictionary<string, string> args)
+    {
+        string name = args.TryGetValue("name", out var n) ? n : "EmjL";
+        try
+        {
+            RaptureAtkUnitManager.Update();
+            var candidate = RaptureAtkUnitManager.GetWindowByName(name);
+            if (candidate is not { IsVisible: true })
+            {
+                lines.Add($"windowName={name} found=false");
+                return;
+            }
+            lines.Add($"windowName={name} found=true pointer={candidate.Pointer:X} bounds={candidate.Bounds}");
+            var agent = candidate.TryFindAgentInterface();
+            if (agent is { IsValid: true })
+                lines.Add($"agentPointer={agent.Pointer:X} agentVTable={agent.VTable:X}");
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"tryWindowByNameError={ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Read-only byte-pattern scan via RB's own bundled GreyMagic library (<c>ff14bot.Core.Memory</c>
+    /// is a <c>GreyMagic.ExternalProcessMemory</c>, which is-a <c>MemoryBase</c> — the exact type
+    /// <c>PatternFinder</c>'s constructor wants). Added 2026-09-15 to check whether the reference
+    /// project's published discard-handler signature (found via Dalamud's own sigscanner) also
+    /// matches on this client build — just locates an address, never writes or executes anything,
+    /// so this stays in the same read-only risk category as every other bridge action. <c>pattern=</c>
+    /// is a space-separated hex byte pattern (GreyMagic's own wildcard syntax, if any, TBD from
+    /// results — the reference signature has no wildcard bytes to test that with).
+    /// </summary>
+    private void AppendBridgeFindPattern(List<string> lines, Dictionary<string, string> args)
+    {
+        try
+        {
+            string pattern = args.TryGetValue("pattern", out var p) ? p : "";
+            if (string.IsNullOrWhiteSpace(pattern))
+            {
+                lines.Add("findPatternError=missing 'pattern' arg");
+                return;
+            }
+            using var finder = new GreyMagic.PatternFinder(RBCore.Memory);
+            IntPtr addr = finder.Find(pattern);
+            IntPtr moduleBase = RBCore.Memory.Process.MainModule?.BaseAddress ?? IntPtr.Zero;
+            lines.Add($"pattern={pattern}");
+            lines.Add($"address={addr:X}");
+            lines.Add($"moduleBase={moduleBase:X}");
+            lines.Add(addr == IntPtr.Zero
+                ? "matched=false"
+                : $"matched=true rva={(long)addr - (long)moduleBase:X}");
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"findPatternError={ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Read-only raw byte dump around an address, for offline disassembly (e.g. via a proper
+    /// disassembler like Capstone, not hand-decoding) rather than modifying/executing anything in
+    /// the game process. Accepts either <c>address=</c> (absolute hex) or <c>rva=</c> (relative to
+    /// the main module's base — matches what <see cref="AppendBridgeFindPattern"/> reports), plus
+    /// <c>before=</c>/<c>after=</c> byte counts (defaults 256/64) to bracket a found instruction
+    /// and trace register provenance backward through the function.
+    /// </summary>
+    private void AppendBridgeBytesAtAddress(List<string> lines, Dictionary<string, string> args)
+    {
+        try
+        {
+            IntPtr moduleBase = RBCore.Memory.Process.MainModule?.BaseAddress ?? IntPtr.Zero;
+            IntPtr center;
+            if (args.TryGetValue("rva", out var rvaStr))
+                center = moduleBase + Convert.ToInt32(rvaStr, 16);
+            else if (args.TryGetValue("address", out var addrStr))
+                center = new IntPtr(Convert.ToInt64(addrStr, 16));
+            else
+            {
+                lines.Add("dumpBytesError=need 'rva' or 'address' arg");
+                return;
+            }
+
+            int before = args.TryGetValue("before", out var b) ? int.Parse(b) : 256;
+            int after = args.TryGetValue("after", out var a) ? int.Parse(a) : 64;
+            IntPtr start = center - before;
+            int total = before + after;
+
+            byte[] bytes = RBCore.Memory.ReadBytes(start, total);
+            lines.Add($"startAddress={start:X}");
+            lines.Add($"centerAddress={center:X}");
+            lines.Add($"centerOffsetInDump={before}");
+            lines.Add($"moduleBase={moduleBase:X}");
+            lines.Add($"bytes={Convert.ToHexString(bytes)}");
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"dumpBytesError={ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Scans every currently-active agent for a plausible (non-null, heap-range-looking) pointer
+    /// value at a fixed byte offset — added 2026-09-15 after Ghidra decompilation of the discard
+    /// handler's callers showed <c>R14 = *(param_1 + 0x13E8)</c> consistently across three
+    /// functions, but agent 328 (Emj) itself reads zero there, meaning <c>param_1</c> is some
+    /// other object entirely. <c>offset=</c> hex byte offset (default 0x13E8).
+    ///
+    /// A bare "is this pointer-shaped" filter on offset 0x13E8 alone returned ~100 hits (too
+    /// noisy — plenty of unrelated classes coincidentally have *some* pointer at that offset).
+    /// Added a second-level check matching the specific pattern found live: the real R14 pool
+    /// has a small discard-count int at <c>+0x1000</c> (confirmed via the discard-handler asm) —
+    /// so <c>followOffset=</c>/<c>followMax=</c> (defaults 0x1000/200) follow each candidate
+    /// pointer one level deeper and only report ones where that nested value is small and
+    /// plausible, not more pointer-shaped garbage.
+    /// </summary>
+    private void AppendBridgeScanAgentsForPointerAt(List<string> lines, Dictionary<string, string> args)
+    {
+        try
+        {
+            var pointers = AgentModule.AgentPointers;
+            long offset = args.TryGetValue("offset", out var o) ? Convert.ToInt64(o, 16) : 0x13E8;
+            long followOffset = args.TryGetValue("followOffset", out var fo) ? Convert.ToInt64(fo, 16) : 0x1000;
+            int followMax = args.TryGetValue("followMax", out var fm) ? int.Parse(fm) : 200;
+            lines.Add($"scanning {pointers.Count} agents at offset 0x{offset:X}, following +0x{followOffset:X} for a value in [0,{followMax}]");
+
+            int hits = 0;
+            for (int i = 0; i < pointers.Count; i++)
+            {
+                if (pointers[i] == IntPtr.Zero)
+                    continue;
+                long candidate;
+                try
+                {
+                    candidate = RBCore.Memory.Read<long>(pointers[i] + (int)offset);
+                }
+                catch
+                {
+                    continue;
+                }
+                if (candidate is <= 0x10000 or >= 0x7FFFFFFFFFFF)
+                    continue; // not pointer-shaped
+
+                int followed;
+                try
+                {
+                    followed = RBCore.Memory.Read<int>(new IntPtr(candidate) + (int)followOffset);
+                }
+                catch
+                {
+                    continue; // candidate pointer doesn't even resolve to readable memory
+                }
+                if (followed < 0 || followed > followMax)
+                    continue;
+
+                hits++;
+                lines.Add($"agent[{i}] pointer={pointers[i]:X} valueAtOffset={candidate:X} followedValue={followed}");
+            }
+            lines.Add($"totalHits={hits}");
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"scanAgentsForPointerAtError={ex.Message}");
         }
     }
 
