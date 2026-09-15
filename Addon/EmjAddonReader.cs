@@ -70,6 +70,15 @@ public sealed class EmjAddonReader
     public byte ReadSelfDiscardCount(AtkAddonControl window) =>
         RBCore.Memory.Read<byte>(window.Pointer + EmjOffsets.SelfDiscardCount);
 
+    public byte ReadShimochaDiscardCount(AtkAddonControl window) =>
+        RBCore.Memory.Read<byte>(window.Pointer + EmjOffsets.ShimochaDiscardCount);
+
+    public byte ReadToimenDiscardCount(AtkAddonControl window) =>
+        RBCore.Memory.Read<byte>(window.Pointer + EmjOffsets.ToimenDiscardCount);
+
+    public byte ReadKamichaDiscardCount(AtkAddonControl window) =>
+        RBCore.Memory.Read<byte>(window.Pointer + EmjOffsets.KamichaDiscardCount);
+
     public Tile? ReadDoraIndicator(AtkAddonControl window) =>
         DecodeTile(RBCore.Memory.Read<int>(window.Pointer + EmjOffsets.DoraIndicator));
 

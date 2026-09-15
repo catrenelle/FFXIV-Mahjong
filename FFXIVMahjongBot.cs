@@ -36,6 +36,11 @@ public sealed class FFXIVMahjongBot : BotBase
     private readonly ICallPolicy _callPolicy = new HeuristicCallPolicy();
     private readonly IRiichiPolicy _riichiPolicy = new StandardRiichiPolicy();
     private readonly IRuleSet _ruleSet = new DomanRuleSet();
+    private readonly MeldTracker _meldTracker = new();
+
+    /// <summary>Drives <see cref="MeldTracker.Reset"/> — self discard count only ever increases within a hand, so a drop means a new hand started.</summary>
+    private int _lastSelfDiscardCountForMeldTracking = -1;
+    private bool _meldCountMismatchLogged;
 
     private string _lastActedHandSignature = "";
 
@@ -805,6 +810,7 @@ public sealed class FFXIVMahjongBot : BotBase
                 if (tileGuess is { } identified && ParseTileName(identified.Name) is { } offeredTile)
                 {
                     var rawHand = _reader.ReadSelfHand(window);
+                    ObserveHandForMeldTracking(rawHand.Concealed, window);
 
                     // A call decision (not our discard turn) means we're holding 13 minus 3
                     // tiles per prior call — 13/10/7/4/1 — same meld-count-from-concealed-count
@@ -894,21 +900,22 @@ public sealed class FFXIVMahjongBot : BotBase
             return;
 
         var hand = _reader.ReadSelfHand(window);
+        ObserveHandForMeldTracking(hand.Concealed, window);
 
         // Our turn to discard whenever the concealed count is 14 minus a multiple of 3
         // (14/11/8/5/2) — each prior call (chi/pon/kan) takes 3 tile-slots out of the
-        // 14-tile-equivalent total. EmjAddonReader doesn't read melds (confirmed live
-        // 2026-09-08: a post-Chi hand reads as an 11-tile fully-concealed hand, not a
-        // hand+meld), but Shanten/Ukeire only ever consult hand.Melds.Count, never the
-        // melds' actual tiles (see Engine/Shanten.cs, Engine/Ukeire.cs) — so placeholder
-        // melds of the right *count* are enough to get a correct discard choice without
-        // knowing which tiles were actually called.
+        // 14-tile-equivalent total. EmjAddonReader doesn't read melds directly off the addon
+        // struct (confirmed live 2026-09-08: a post-Chi hand reads as an 11-tile fully-concealed
+        // hand, not a hand+meld) — but MeldTracker (2026-09-15) infers the real called tiles by
+        // watching the concealed hand shrink, so ResolveMelds below prefers that over a
+        // placeholder whenever its count actually matches what the addon's concealed-count says
+        // to expect.
         int concealedCount = hand.Concealed.Count;
         if (concealedCount == 0 || concealedCount % 3 != 2)
             return; // mid-transition read, not a genuine discard-turn shape
 
         int meldCount = (EmjOffsets.HandSize - concealedCount) / 3;
-        var handForPolicy = meldCount == 0 ? hand : new Hand(hand.Concealed, PlaceholderMelds(meldCount));
+        var handForPolicy = meldCount == 0 ? hand : new Hand(hand.Concealed, ResolveMelds(meldCount));
 
         string signature = string.Join(",", hand.Concealed.Select(t => t.Id).OrderBy(id => id));
         if (signature == _lastActedHandSignature)
@@ -1203,16 +1210,62 @@ public sealed class FFXIVMahjongBot : BotBase
     }
 
     /// <summary>
+    /// Feeds <see cref="_meldTracker"/> the current concealed hand plus each opponent's live
+    /// discard count, so it can infer a newly-called meld from a hand-size delta. Called from
+    /// both the discard-turn and call-decision hand reads (2026-09-15), since a meld can be
+    /// observed to have formed at either polling point depending on which Pulse tick first
+    /// catches the shrink. Also drives the tracker's own hand-boundary reset: self discard count
+    /// only ever increases within a hand, so a drop means a fresh deal.
+    /// </summary>
+    private void ObserveHandForMeldTracking(IReadOnlyList<Tile> concealed, AtkAddonControl window)
+    {
+        int selfDiscardCount = _reader.ReadSelfDiscardCount(window);
+        if (selfDiscardCount < _lastSelfDiscardCountForMeldTracking)
+        {
+            _meldTracker.Reset();
+            _meldCountMismatchLogged = false;
+            Logging.Write("[FFXIVMahjong] meld tracker reset (new hand detected via self discard count decreasing)");
+        }
+        _lastSelfDiscardCountForMeldTracking = selfDiscardCount;
+
+        var inferred = _meldTracker.ObserveHand(
+            concealed,
+            _reader.ReadShimochaDiscardCount(window),
+            _reader.ReadToimenDiscardCount(window),
+            _reader.ReadKamichaDiscardCount(window));
+
+        if (inferred is { } meld)
+            Logging.Write($"[FFXIVMahjong] meld tracker inferred {meld.Type} ({string.Join(",", meld.Tiles)}) called from {meld.CalledFrom}");
+    }
+
+    /// <summary>
+    /// Prefers <see cref="MeldTracker"/>'s real inferred melds over the count-only placeholder,
+    /// whenever the tracker's own count actually matches what the addon's concealed-tile-count
+    /// implies — falls back to the placeholder otherwise (e.g. the bot was started mid-hand with
+    /// a meld already called before it started watching, so the tracker never saw it form).
+    /// </summary>
+    private IReadOnlyList<Meld> ResolveMelds(int meldCount)
+    {
+        if (_meldTracker.Melds.Count == meldCount)
+            return _meldTracker.Melds;
+
+        if (!_meldCountMismatchLogged)
+        {
+            _meldCountMismatchLogged = true;
+            Logging.Write($"[FFXIVMahjong] meld tracker count mismatch (tracked {_meldTracker.Melds.Count}, expected {meldCount}) — falling back to placeholder melds for this hand");
+        }
+        return PlaceholderMelds(meldCount);
+    }
+
+    /// <summary>
     /// Same placeholder-meld-count trick as <see cref="PlaceholderMelds"/>/the discard path
     /// above, but for a hand not on its own discard turn (13 tiles minus 3 per prior call,
     /// i.e. concealed count 13/10/7/4/1) rather than the discard-turn shape (14 minus 3 per
-    /// call). Needed for <see cref="ICallPolicy"/>'s Pon/Chi heuristics, which — unlike
-    /// Shanten/Ukeire — also read placeholder meld *content* (suit/type) for the yaku-potential
-    /// check, so this is a looser approximation than the discard path's: fine for a log-only
-    /// recommendation, not accurate enough to drive real dispatch.
+    /// call). Prefers <see cref="MeldTracker"/>'s real melds the same way <see cref="ResolveMelds"/>
+    /// does for the discard path; falls back to the same looser placeholder otherwise.
     /// </summary>
-    private static Hand BuildHandForCallDecision(Hand rawHand, int meldCount) =>
-        meldCount == 0 ? rawHand : new Hand(rawHand.Concealed, PlaceholderMelds(meldCount));
+    private Hand BuildHandForCallDecision(Hand rawHand, int meldCount) =>
+        meldCount == 0 ? rawHand : new Hand(rawHand.Concealed, ResolveMelds(meldCount));
 
     private int FindSlotForTile(AtkAddonControl window, Tile tile)
     {

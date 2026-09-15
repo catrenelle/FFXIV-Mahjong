@@ -18,6 +18,19 @@ internal static class EmjOffsets
     public const int ToimenScore = 0x0AC0;
     public const int KamichaScore = 0x0DA0;
     public const int SelfDiscardCount = 0x04FE;
+
+    /// <summary>
+    /// Confirmed live 2026-09-15 via a before/after raw-memory diff bracketing 5 real rounds
+    /// (all 4 seats' counts advanced by exactly +5, matching 5 full E→S→W→N cycles with no
+    /// calls disrupting turn order): same "-2 from score offset" pattern as
+    /// <see cref="SelfDiscardCount"/>, applied to the other 3 per-seat score offsets (each
+    /// 0x2E0 apart, same stride the scores themselves use).
+    /// </summary>
+    public const int ShimochaDiscardCount = 0x07DE;
+
+    public const int ToimenDiscardCount = 0x0ABE;
+
+    public const int KamichaDiscardCount = 0x0D9E;
     public const int HandArrayStart = 0x0DB8;
     public const int DoraIndicator = 0x0FD8;
 
