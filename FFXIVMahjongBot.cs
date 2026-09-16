@@ -235,6 +235,9 @@ public sealed class FFXIVMahjongBot : BotBase
                     case "ScanAgentsForPointerAt":
                         AppendBridgeScanAgentsForPointerAt(lines, args);
                         break;
+                    case "DumpEmjNumberArray":
+                        AppendBridgeEmjNumberArray(lines, args);
+                        break;
                     default:
                         success = false;
                         lines.Add($"error=unknown action '{action}'");
@@ -731,6 +734,92 @@ public sealed class FFXIVMahjongBot : BotBase
         catch (Exception ex)
         {
             lines.Add($"scanAgentsForPointerAtError={ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Walks the fully-documented, publicly-known FFXIVClientStructs chain
+    /// <c>AtkStage::Instance() → AtkArrayDataHolder (+0x38) → NumberArrays (+0x18) →
+    /// NumberArrays[141] (NumberArrayType.Emj) → IntArray (+0x28)</c> — a genuine static
+    /// singleton reachable via a fixed signature, not the undocumented, call-graph-only R14
+    /// pool chased through Ghidra earlier (see the native-RE memory file). Addons render *from*
+    /// their assigned NumberArrayData, so this is a fundamentally different, better-grounded
+    /// candidate for where computed Mahjong UI state (possibly including pile/meld data) lives.
+    /// Purely read-only — no writes, no hooking. Reports each intermediate pointer so a broken
+    /// link in the chain is immediately visible rather than a silent failure.
+    /// </summary>
+    private void AppendBridgeEmjNumberArray(List<string> lines, Dictionary<string, string> args)
+    {
+        const string atkStageInstancePattern = "48 8B 05 ?? ?? ?? ?? 4C 8B 40 18 45 8B 40 18";
+        const int numberArrayTypeEmj = 141;
+
+        try
+        {
+            using var finder = new GreyMagic.PatternFinder(RBCore.Memory);
+            IntPtr matchAddress = finder.Find(atkStageInstancePattern);
+            lines.Add($"atkStageSigMatch={matchAddress:X}");
+            if (matchAddress == IntPtr.Zero)
+            {
+                lines.Add("error=AtkStage::Instance signature not found");
+                return;
+            }
+
+            int disp = RBCore.Memory.Read<int>(matchAddress + 3);
+            IntPtr ripBase = matchAddress + 7; // "48 8B 05 <disp32>" is 7 bytes total
+            IntPtr staticSlot = ripBase + disp;
+            IntPtr atkStage = RBCore.Memory.Read<IntPtr>(staticSlot);
+            lines.Add($"atkStageStaticSlot={staticSlot:X}");
+            lines.Add($"atkStagePtr={atkStage:X}");
+            if (atkStage == IntPtr.Zero)
+            {
+                lines.Add("error=AtkStage instance is null");
+                return;
+            }
+
+            IntPtr arrayDataHolder = RBCore.Memory.Read<IntPtr>(atkStage + 0x38);
+            lines.Add($"atkArrayDataHolder={arrayDataHolder:X}");
+            if (arrayDataHolder == IntPtr.Zero)
+            {
+                lines.Add("error=AtkArrayDataHolder is null");
+                return;
+            }
+
+            IntPtr numberArrays = RBCore.Memory.Read<IntPtr>(arrayDataHolder + 0x18);
+            lines.Add($"numberArraysBase={numberArrays:X}");
+            if (numberArrays == IntPtr.Zero)
+            {
+                lines.Add("error=NumberArrays base is null");
+                return;
+            }
+
+            IntPtr emjArray = RBCore.Memory.Read<IntPtr>(numberArrays + numberArrayTypeEmj * 8);
+            lines.Add($"emjNumberArrayData={emjArray:X}");
+            if (emjArray == IntPtr.Zero)
+            {
+                lines.Add("error=NumberArrays[141] (Emj) is null — addon likely not open right now");
+                return;
+            }
+
+            int size = RBCore.Memory.Read<int>(emjArray + 0x8);
+            IntPtr intArray = RBCore.Memory.Read<IntPtr>(emjArray + 0x28);
+            lines.Add($"size={size}");
+            lines.Add($"intArrayPtr={intArray:X}");
+            if (intArray == IntPtr.Zero || size <= 0 || size > 4096)
+            {
+                lines.Add("error=IntArray pointer or size looks implausible");
+                return;
+            }
+
+            var values = RBCore.Memory.ReadArray<int>(intArray, size);
+            for (int i = 0; i < values.Length; i++)
+            {
+                string note = DecodeTileGuess(values[i]);
+                lines.Add($"emj[{i}]={values[i]}{note}");
+            }
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"dumpEmjNumberArrayError={ex.Message}");
         }
     }
 
