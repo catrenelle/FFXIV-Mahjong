@@ -238,6 +238,9 @@ public sealed class FFXIVMahjongBot : BotBase
                     case "DumpEmjNumberArray":
                         AppendBridgeEmjNumberArray(lines, args);
                         break;
+                    case "DumpEmjStringArray":
+                        AppendBridgeEmjStringArray(lines, args);
+                        break;
                     default:
                         success = false;
                         lines.Add($"error=unknown action '{action}'");
@@ -750,39 +753,12 @@ public sealed class FFXIVMahjongBot : BotBase
     /// </summary>
     private void AppendBridgeEmjNumberArray(List<string> lines, Dictionary<string, string> args)
     {
-        const string atkStageInstancePattern = "48 8B 05 ?? ?? ?? ?? 4C 8B 40 18 45 8B 40 18";
         const int numberArrayTypeEmj = 141;
-
         try
         {
-            using var finder = new GreyMagic.PatternFinder(RBCore.Memory);
-            IntPtr matchAddress = finder.Find(atkStageInstancePattern);
-            lines.Add($"atkStageSigMatch={matchAddress:X}");
-            if (matchAddress == IntPtr.Zero)
-            {
-                lines.Add("error=AtkStage::Instance signature not found");
-                return;
-            }
-
-            int disp = RBCore.Memory.Read<int>(matchAddress + 3);
-            IntPtr ripBase = matchAddress + 7; // "48 8B 05 <disp32>" is 7 bytes total
-            IntPtr staticSlot = ripBase + disp;
-            IntPtr atkStage = RBCore.Memory.Read<IntPtr>(staticSlot);
-            lines.Add($"atkStageStaticSlot={staticSlot:X}");
-            lines.Add($"atkStagePtr={atkStage:X}");
-            if (atkStage == IntPtr.Zero)
-            {
-                lines.Add("error=AtkStage instance is null");
-                return;
-            }
-
-            IntPtr arrayDataHolder = RBCore.Memory.Read<IntPtr>(atkStage + 0x38);
-            lines.Add($"atkArrayDataHolder={arrayDataHolder:X}");
+            IntPtr arrayDataHolder = ResolveAtkArrayDataHolder(lines);
             if (arrayDataHolder == IntPtr.Zero)
-            {
-                lines.Add("error=AtkArrayDataHolder is null");
                 return;
-            }
 
             IntPtr numberArrays = RBCore.Memory.Read<IntPtr>(arrayDataHolder + 0x18);
             lines.Add($"numberArraysBase={numberArrays:X}");
@@ -821,6 +797,95 @@ public sealed class FFXIVMahjongBot : BotBase
         {
             lines.Add($"dumpEmjNumberArrayError={ex.Message}");
         }
+    }
+
+    /// <summary>Same chain as <see cref="AppendBridgeEmjNumberArray"/> but for StringArrayType.Emj (121) — StringArrayData.StringArray at +0x28, an array of null-terminated string pointers instead of ints.</summary>
+    private void AppendBridgeEmjStringArray(List<string> lines, Dictionary<string, string> args)
+    {
+        const int stringArrayTypeEmj = 121;
+        try
+        {
+            IntPtr arrayDataHolder = ResolveAtkArrayDataHolder(lines);
+            if (arrayDataHolder == IntPtr.Zero)
+                return;
+
+            IntPtr stringArrays = RBCore.Memory.Read<IntPtr>(arrayDataHolder + 0x30);
+            lines.Add($"stringArraysBase={stringArrays:X}");
+            if (stringArrays == IntPtr.Zero)
+            {
+                lines.Add("error=StringArrays base is null");
+                return;
+            }
+
+            IntPtr emjArray = RBCore.Memory.Read<IntPtr>(stringArrays + stringArrayTypeEmj * 8);
+            lines.Add($"emjStringArrayData={emjArray:X}");
+            if (emjArray == IntPtr.Zero)
+            {
+                lines.Add("error=StringArrays[121] (Emj) is null — addon likely not open right now");
+                return;
+            }
+
+            int size = RBCore.Memory.Read<int>(emjArray + 0x8);
+            IntPtr stringArray = RBCore.Memory.Read<IntPtr>(emjArray + 0x28);
+            lines.Add($"size={size}");
+            lines.Add($"stringArrayPtr={stringArray:X}");
+            if (stringArray == IntPtr.Zero || size <= 0 || size > 4096)
+            {
+                lines.Add("error=StringArray pointer or size looks implausible");
+                return;
+            }
+
+            for (int i = 0; i < size; i++)
+            {
+                IntPtr strPtr = RBCore.Memory.Read<IntPtr>(stringArray + i * 8);
+                string text = strPtr == IntPtr.Zero ? "(null)" : RBCore.Memory.ReadStringUTF8(strPtr);
+                lines.Add($"emjStr[{i}]={text}");
+            }
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"dumpEmjStringArrayError={ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Resolves <c>AtkStage::Instance() → AtkArrayDataHolder (+0x38)</c> — a genuine static
+    /// singleton reachable via a fixed, publicly-documented signature, not the undocumented,
+    /// call-graph-only R14 pool chased through Ghidra earlier (see the native-RE memory file).
+    /// Shared by both the number- and string-array readers, since they only diverge at which
+    /// array-pointer field (NumberArrays vs StringArrays) they read off the holder. Purely
+    /// read-only. Returns <see cref="IntPtr.Zero"/> and appends an error line on any broken link.
+    /// </summary>
+    private IntPtr ResolveAtkArrayDataHolder(List<string> lines)
+    {
+        const string atkStageInstancePattern = "48 8B 05 ?? ?? ?? ?? 4C 8B 40 18 45 8B 40 18";
+
+        using var finder = new GreyMagic.PatternFinder(RBCore.Memory);
+        IntPtr matchAddress = finder.Find(atkStageInstancePattern);
+        lines.Add($"atkStageSigMatch={matchAddress:X}");
+        if (matchAddress == IntPtr.Zero)
+        {
+            lines.Add("error=AtkStage::Instance signature not found");
+            return IntPtr.Zero;
+        }
+
+        int disp = RBCore.Memory.Read<int>(matchAddress + 3);
+        IntPtr ripBase = matchAddress + 7; // "48 8B 05 <disp32>" is 7 bytes total
+        IntPtr staticSlot = ripBase + disp;
+        IntPtr atkStage = RBCore.Memory.Read<IntPtr>(staticSlot);
+        lines.Add($"atkStageStaticSlot={staticSlot:X}");
+        lines.Add($"atkStagePtr={atkStage:X}");
+        if (atkStage == IntPtr.Zero)
+        {
+            lines.Add("error=AtkStage instance is null");
+            return IntPtr.Zero;
+        }
+
+        IntPtr arrayDataHolder = RBCore.Memory.Read<IntPtr>(atkStage + 0x38);
+        lines.Add($"atkArrayDataHolder={arrayDataHolder:X}");
+        if (arrayDataHolder == IntPtr.Zero)
+            lines.Add("error=AtkArrayDataHolder is null");
+        return arrayDataHolder;
     }
 
     private static string DecodeTileGuess(int raw)
