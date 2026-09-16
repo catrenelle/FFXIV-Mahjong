@@ -241,6 +241,9 @@ public sealed class FFXIVMahjongBot : BotBase
                     case "DumpEmjStringArray":
                         AppendBridgeEmjStringArray(lines, args);
                         break;
+                    case "ScanForTileArrayPattern":
+                        AppendBridgeScanForTileArrayPattern(lines, window, args);
+                        break;
                     default:
                         success = false;
                         lines.Add($"error=unknown action '{action}'");
@@ -886,6 +889,69 @@ public sealed class FFXIVMahjongBot : BotBase
         if (arrayDataHolder == IntPtr.Zero)
             lines.Add("error=AtkArrayDataHolder is null");
         return arrayDataHolder;
+    }
+
+    /// <summary>
+    /// Scans the window struct and the bound AgentEmj for runs of consecutive texture-offset-
+    /// encoded tile values (our own hand array's exact encoding — 76041+id, NOT the noisy bare
+    /// 0-33 range that drowned in false positives during the earlier White Dragon search) —
+    /// added 2026-09-15 after learning tonight's whole session was played against AI opponents
+    /// (Novice Table / EmjSolo), where the client may have no reason to hide "opponent" hands
+    /// the way it would for real players. A texture-offset match is individually ~1-in-116-
+    /// million by chance (37 valid values out of 2^32), so a run of <c>minRunLength</c>+
+    /// consecutive matches is an extremely strong, low-false-positive signal — if AI hands are
+    /// readable anywhere in these two already-explored structures, this should find them without
+    /// needing to already know the offset.
+    /// </summary>
+    private void AppendBridgeScanForTileArrayPattern(List<string> lines, AtkAddonControl window, Dictionary<string, string> args)
+    {
+        try
+        {
+            int minRunLength = args.TryGetValue("minRunLength", out var m) ? int.Parse(m) : 4;
+
+            var windowRaw = _reader.DumpRawMemorySnapshot(window);
+            ScanForTextureOffsetRuns(lines, windowRaw, "window", minRunLength);
+
+            var agentRaw = _reader.DumpAgentEmjRawMemorySnapshot(window);
+            if (agentRaw is not null)
+                ScanForTextureOffsetRuns(lines, agentRaw, "agent328", minRunLength);
+            else
+                lines.Add("agent328=unavailable");
+        }
+        catch (Exception ex)
+        {
+            lines.Add($"scanForTileArrayPatternError={ex.Message}");
+        }
+    }
+
+    private static void ScanForTextureOffsetRuns(List<string> lines, int[] data, string label, int minRunLength)
+    {
+        int found = 0;
+        int i = 0;
+        while (i < data.Length)
+        {
+            int runStart = i;
+            while (i < data.Length && IsTextureOffsetTile(data[i]))
+                i++;
+            int runLength = i - runStart;
+            if (runLength >= minRunLength)
+            {
+                found++;
+                var decoded = new List<string>();
+                for (int k = runStart; k < i; k++)
+                    decoded.Add(new Tile(data[k] - EmjOffsets.TileTextureBase).ToString());
+                lines.Add($"{label} run@0x{runStart * 4:X4} length={runLength}: {string.Join(",", decoded)}");
+            }
+            if (runLength == 0)
+                i++;
+        }
+        lines.Add($"{label}TotalRunsFound={found}");
+    }
+
+    private static bool IsTextureOffsetTile(int raw)
+    {
+        int id = raw - EmjOffsets.TileTextureBase;
+        return id is >= 0 and < Tile.KindCount;
     }
 
     private static string DecodeTileGuess(int raw)
